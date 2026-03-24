@@ -3,7 +3,7 @@
 import { useRef } from "react"
 import { motion, useInView } from "framer-motion"
 import Image from "next/image"
-import Link from "next/link"
+import { HashLink } from "@/components/hash-link"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 
 interface Category {
@@ -31,7 +31,8 @@ const categories: Category[] = [
   {
     name: "Coats",
     slug: "Coats",
-    image: "https://images.unsplash.com/photo-1544923246-77307dd628b7?w=800&q=80",
+    image:
+      "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=800&q=80",
   },
   {
     name: "Accessories",
@@ -119,8 +120,8 @@ export function CategorySection({ onCategorySelect }: CategorySectionProps) {
                 transition={{ duration: 0.6, delay: index * 0.1 }}
                 className="flex-shrink-0 snap-start"
               >
-                <Link
-                  href={`#collection`}
+                <HashLink
+                  href="/#collection"
                   onClick={() => handleCategoryClick(category.slug)}
                   className="group block relative w-[280px] md:w-[300px] h-[400px] md:h-[450px] rounded-sm overflow-hidden"
                 >
@@ -150,7 +151,7 @@ export function CategorySection({ onCategorySelect }: CategorySectionProps) {
                       <ChevronRight className="w-4 h-4 text-white/80" />
                     </div>
                   </div>
-                </Link>
+                </HashLink>
               </motion.div>
             ))}
           </div>

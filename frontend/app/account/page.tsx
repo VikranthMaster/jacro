@@ -13,6 +13,10 @@ import { useCart } from "@/lib/cart"
 export default function AccountPage() {
   const router = useRouter()
   const { user, isAuthenticated, updateProfile } = useAuth()
+  const displayName =
+    user?.name && user.name.trim().toLowerCase() !== "user"
+      ? user.name
+      : (user?.email?.split("@")[0] ?? "")
   const cartCount = useCart((state) => state.getItemCount())
   
   const [isEditing, setIsEditing] = useState(false)
@@ -28,10 +32,10 @@ export default function AccountPage() {
 
   useEffect(() => {
     if (user) {
-      setName(user.name)
+      setName(displayName)
       setEmail(user.email)
     }
-  }, [user])
+  }, [user, displayName])
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -43,7 +47,7 @@ export default function AccountPage() {
 
   const handleCancel = () => {
     if (user) {
-      setName(user.name)
+      setName(displayName)
       setEmail(user.email)
     }
     setIsEditing(false)
@@ -116,7 +120,7 @@ export default function AccountPage() {
                 ) : (
                   <div className="flex items-center gap-3 py-3 text-[#111111]">
                     <User className="w-5 h-5 text-[#6B6B6B]" />
-                    {user?.name}
+                    {displayName}
                   </div>
                 )}
               </div>

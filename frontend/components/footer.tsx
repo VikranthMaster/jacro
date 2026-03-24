@@ -3,34 +3,29 @@
 import { motion } from "framer-motion"
 import Image from "next/image"
 import Link from "next/link"
+import { HashLink } from "@/components/hash-link"
 import { Instagram, Twitter, Facebook } from "lucide-react"
 
 const footerLinks = {
   shop: [
-    { name: "New Arrivals", href: "#new" },
-    { name: "Best Sellers", href: "#" },
-    { name: "Sale", href: "#" },
-    { name: "All Products", href: "#collection" },
+    { name: "New Arrivals", href: "/#new" },
+    { name: "Best Sellers", href: "/#collection" },
+    { name: "Sale", href: "/#collection" },
+    { name: "All Products", href: "/#collection" },
   ],
   help: [
-    { name: "FAQ", href: "#" },
-    { name: "Shipping", href: "#" },
-    { name: "Returns", href: "#" },
-    { name: "Contact Us", href: "#" },
-  ],
-  company: [
-    { name: "About Us", href: "#about" },
-    { name: "Careers", href: "#" },
-    { name: "Sustainability", href: "#" },
-    { name: "Press", href: "#" },
+    { name: "FAQ", href: "/faq" },
+    { name: "Shipping", href: "/help#shipping" },
+    { name: "Returns", href: "/help#returns" },
+    { name: "Contact Us", href: "/contact" },
   ],
 }
 
 export function Footer() {
   return (
-    <footer id="about" className="bg-[#EFE8D8]">
+    <footer className="bg-[#EFE8D8]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16">
-        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-8 lg:gap-8">
+        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-10">
           {/* Brand */}
           <div className="col-span-2 lg:col-span-2">
             <Link href="/" className="flex items-center gap-3 mb-6">
@@ -58,38 +53,7 @@ export function Footer() {
           {/* Links */}
           <FooterLinkGroup title="Shop" links={footerLinks.shop} />
           <FooterLinkGroup title="Help" links={footerLinks.help} />
-          <FooterLinkGroup title="Company" links={footerLinks.company} />
         </div>
-
-        {/* Newsletter */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6 }}
-          className="mt-12 pt-8 border-t border-[#E5E5E5]"
-        >
-          <div className="max-w-md">
-            <h4 className="text-[#111111] text-sm tracking-[0.1em] uppercase mb-4 font-medium">
-              Subscribe to our newsletter
-            </h4>
-            <form className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="email"
-                placeholder="Enter your email"
-                className="flex-1 bg-white border border-[#E5E5E5] px-4 py-3 text-sm text-[#111111] placeholder:text-[#6B6B6B] focus:outline-none focus:border-[#C6A96B] transition-colors rounded-sm"
-              />
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                type="submit"
-                className="px-6 py-3 bg-[#111111] text-white text-sm tracking-wider uppercase font-medium transition-all hover:bg-[#111111]/90 rounded-sm"
-              >
-                Subscribe
-              </motion.button>
-            </form>
-          </div>
-        </motion.div>
 
         {/* Bottom */}
         <div className="mt-12 pt-6 border-t border-[#E5E5E5] flex flex-col md:flex-row justify-between items-center gap-4">
@@ -122,12 +86,21 @@ function FooterLinkGroup({ title, links }: { title: string; links: { name: strin
       <ul className="space-y-2.5">
         {links.map((link) => (
           <li key={link.name}>
-            <Link
-              href={link.href}
-              className="text-[#6B6B6B] text-sm hover:text-[#111111] transition-colors"
-            >
-              {link.name}
-            </Link>
+            {link.href.startsWith("/#") ? (
+              <HashLink
+                href={link.href}
+                className="text-[#6B6B6B] text-sm hover:text-[#111111] transition-colors"
+              >
+                {link.name}
+              </HashLink>
+            ) : (
+              <Link
+                href={link.href}
+                className="text-[#6B6B6B] text-sm hover:text-[#111111] transition-colors"
+              >
+                {link.name}
+              </Link>
+            )}
           </li>
         ))}
       </ul>

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo, useEffect, useRef } from "react"
+import { useState, useMemo, useEffect, useRef, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { Navbar } from "@/components/navbar"
 import { Hero } from "@/components/hero"
 import { CategorySection } from "@/components/category-section"
@@ -19,9 +20,12 @@ interface Filters {
   colors: string[]
 }
 
-export default function Home() {
+function HomeContent() {
+  const searchParams = useSearchParams()
+  const urlQ = searchParams.get("q") ?? ""
+
   const [mounted, setMounted] = useState(false)
-  const [searchQuery, setSearchQuery] = useState("")
+  const [searchQuery, setSearchQuery] = useState(urlQ)
   const [filters, setFilters] = useState<Filters>({
     category: "All",
     priceRange: [0, 5000],
@@ -35,6 +39,10 @@ export default function Home() {
 
   const collectionRef = useRef<HTMLDivElement>(null)
   const { getItemCount } = useCart()
+
+  useEffect(() => {
+    setSearchQuery(urlQ)
+  }, [urlQ])
 
   // Initial load
   useEffect(() => {
@@ -65,9 +73,7 @@ export default function Home() {
 
         let baseProducts: Product[] = []
 
-        // 1) Get base list (either search API or filter API or all products)
         if (trimmed) {
-          // Search endpoint doesn't support category/price params, so we apply them client-side below.
           baseProducts = await searchProducts(trimmed)
         } else if (categoryActive || priceActive) {
           baseProducts = await filterProducts({
@@ -79,7 +85,6 @@ export default function Home() {
           baseProducts = allProducts
         }
 
-        // 2) Apply remaining filters client-side (important when searching)
         let final = baseProducts
         if (categoryActive) {
           final = final.filter((p) => p.category === filters.category)
@@ -103,7 +108,7 @@ export default function Home() {
   }, [searchQuery, filters, allProducts])
 
   const handleCategorySelect = (category: string) => {
-    setFilters(prev => ({ ...prev, category }))
+    setFilters((prev) => ({ ...prev, category }))
     setTimeout(() => {
       collectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
     }, 100)
@@ -120,6 +125,7 @@ export default function Home() {
           onSearch={setSearchQuery}
           onFilterChange={setFilters}
           activeCategory={filters.category}
+          urlSearchSync={urlQ}
         />
         <ProductGrid
           products={filteredProducts}
@@ -128,12 +134,26 @@ export default function Home() {
             filteredProducts.length === 0 && !loading
               ? "Try adjusting your filters"
               : filters.category !== "All"
-              ? filters.category
-              : "Explore"
+                ? filters.category
+                : "Explore"
           }
         />
       </div>
       <Footer />
     </main>
+  )
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#F5F5DC] flex items-center justify-center text-[#6B6B6B]">
+          Loading…
+        </main>
+      }
+    >
+      <HomeContent />
+    </Suspense>
   )
 }

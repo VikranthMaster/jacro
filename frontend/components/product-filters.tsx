@@ -1,11 +1,21 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { Search, SlidersHorizontal, X, ChevronDown } from "lucide-react"
+import Image from "next/image"
 import { Slider } from "@/components/ui/slider"
 
 const categories = ["All", "Tops", "Outerwear", "Coats", "Shoes", "Bottoms", "Accessories"]
+
+const CATEGORY_IMAGES: Record<string, string> = {
+  Tops: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=120&q=80",
+  Outerwear: "https://images.unsplash.com/photo-1551028719-00167b16eac5?w=120&q=80",
+  Coats: "https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=120&q=80",
+  Shoes: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=120&q=80",
+  Bottoms: "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?w=120&q=80",
+  Accessories: "https://images.unsplash.com/photo-1523170335258-f5ed11844a49?w=120&q=80",
+}
 const sizes = ["XS", "S", "M", "L", "XL"]
 const colors = [
   { name: "Black", value: "#0A0A0A" },
@@ -26,10 +36,13 @@ interface ProductFiltersProps {
   onSearch?: (query: string) => void
   onFilterChange?: (filters: Filters) => void
   activeCategory?: string
+  /** When the URL `?q=` changes (e.g. navbar search), sync the search field */
+  urlSearchSync?: string
 }
 
-export function ProductFilters({ onSearch, onFilterChange, activeCategory }: ProductFiltersProps) {
+export function ProductFilters({ onSearch, onFilterChange, activeCategory, urlSearchSync }: ProductFiltersProps) {
   const [searchQuery, setSearchQuery] = useState("")
+  const lastUrlSearch = useRef<string | null>(null)
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
   const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState(activeCategory || "All")
@@ -43,6 +56,14 @@ export function ProductFilters({ onSearch, onFilterChange, activeCategory }: Pro
       setSelectedCategory(activeCategory)
     }
   }, [activeCategory, selectedCategory])
+
+  useEffect(() => {
+    if (urlSearchSync === undefined) return
+    if (lastUrlSearch.current === urlSearchSync) return
+    lastUrlSearch.current = urlSearchSync
+    setSearchQuery(urlSearchSync)
+    onSearch?.(urlSearchSync)
+  }, [urlSearchSync, onSearch])
 
   // Debounced search (slightly faster feel)
   useEffect(() => {
@@ -115,12 +136,23 @@ export function ProductFilters({ onSearch, onFilterChange, activeCategory }: Pro
             <button
               key={category}
               onClick={() => setSelectedCategory(category)}
-              className={`px-4 py-2 text-xs tracking-wide rounded-sm transition-all ${
+              className={`px-4 py-2 text-xs tracking-wide rounded-sm transition-all inline-flex items-center gap-2 ${
                 selectedCategory === category
                   ? "bg-[#111111] text-white"
                   : "bg-white text-[#111111]/60 hover:bg-[#EFE8D8] hover:text-[#111111] border border-[#E5E5E5]"
               }`}
             >
+              {category !== "All" && CATEGORY_IMAGES[category] && (
+                <span className="relative w-7 h-7 rounded-sm overflow-hidden shrink-0">
+                  <Image
+                    src={CATEGORY_IMAGES[category]}
+                    alt=""
+                    fill
+                    className="object-cover"
+                    sizes="28px"
+                  />
+                </span>
+              )}
               {category}
             </button>
           ))}

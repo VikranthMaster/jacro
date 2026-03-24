@@ -1,22 +1,24 @@
 "use client"
 
-import { useState } from "react"
+import { Suspense, useState } from "react"
 import { motion } from "framer-motion"
 import { Eye, EyeOff, Mail, Lock } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth"
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
-  
+
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { login } = useAuth()
+  const justRegistered = searchParams.get("registered") === "1"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -24,11 +26,11 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
-      const success = await login(email, password)
-      if (success) {
+      const result = await login(email, password)
+      if (result.ok) {
         router.push("/")
       } else {
-        setError("Invalid email or password")
+        setError(result.message)
       }
     } catch {
       setError("An error occurred. Please try again.")
@@ -62,9 +64,20 @@ export default function LoginPage() {
           <h1 className="text-2xl font-serif text-center text-[#111111] mb-2">
             Welcome Back
           </h1>
-          <p className="text-center text-[#6B6B6B] text-sm mb-8">
-            Sign in to your JACRO account
+          <p className="text-center text-[#6B6B6B] text-sm mb-6">
+            Sign in to your JACRO account. If you just registered, check your mail for verification
+            first.
           </p>
+
+          {justRegistered && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm px-4 py-3 rounded-md mb-6"
+            >
+              Account created. Sign in here with the email and password you just used.
+            </motion.div>
+          )}
 
           {error && (
             <motion.div
@@ -145,5 +158,19 @@ export default function LoginPage() {
         </div>
       </motion.div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#F5F5DC] flex items-center justify-center text-[#6B6B6B] text-sm">
+          Loading…
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   )
 }

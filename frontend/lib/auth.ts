@@ -9,11 +9,20 @@ export interface User {
   email: string
 }
 
+export type SignupResult =
+  | { ok: true; needsEmailConfirmation: true; email: string }
+  | { ok: true; needsEmailConfirmation: false }
+  | { ok: false; message: string }
+
+export type LoginResult =
+  | { ok: true }
+  | { ok: false; message: string; emailNotConfirmed?: boolean }
+
 interface AuthStore {
   user: User | null
   isAuthenticated: boolean
-  login: (email: string, password: string) => Promise<boolean>
-  signup: (name: string, email: string, password: string) => Promise<boolean>
+  login: (email: string, password: string) => Promise<LoginResult>
+  signup: (name: string, email: string, password: string) => Promise<SignupResult>
   logout: () => void
   updateProfile: (name: string, email: string) => void
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>
@@ -40,25 +49,36 @@ export const useAuth = create<AuthStore>()(
             })
           })
 
-          const data = await res.json()
+          const data = await res.json().catch(() => ({}))
 
-          if (data.statusCode == 200) {
+          if (res.ok && data.statusCode == 200) {
+            const fallbackName = (data.user.email || "").split("@")[0] || "Account"
             set({
               user: {
                 id: data.user.id,
-                name: data.user.name || "User",
+                name: data.user.name || fallbackName,
                 email: data.user.email,
               },
               isAuthenticated: true,
             })
             localStorage.setItem("user_id", data.user.id);
             localStorage.setItem("token", data.token);
-            return true
+            return { ok: true }
           }
-          return false
+
+          const emailNotConfirmed = data.code === "EMAIL_NOT_CONFIRMED"
+          const hint =
+            "Check your mail for verification — open the link we sent, then sign in here."
+          return {
+            ok: false,
+            message: emailNotConfirmed
+              ? hint
+              : data.message || "Invalid email or password",
+            emailNotConfirmed: emailNotConfirmed || undefined,
+          }
         } catch (err) {
           console.error(err)
-          return false
+          return { ok: false, message: "An error occurred. Please try again." }
         }
       },
 
@@ -73,19 +93,35 @@ export const useAuth = create<AuthStore>()(
               name, email, password
             })
           })
-          const data = await res.json()
-          if (data.statusCode == 200) {
-            set({
-              user: data.user,
-              isAuthenticated: true,
-            })
-            return true
+          const data = await res.json().catch(() => ({}))
+
+          if (res.status === 409 || res.status === 400) {
+            const msg = data.message || "Registration failed"
+            const looksLikeDuplicate =
+              /already registered|already exists|user exists/i.test(msg)
+            return {
+              ok: false,
+              message: looksLikeDuplicate ? "Email already exists" : msg,
+            }
           }
 
-          return false
+          if (data.statusCode == 200 && data.needsEmailConfirmation) {
+            return {
+              ok: true,
+              needsEmailConfirmation: true,
+              email: data.user?.email || email.trim(),
+            }
+          }
+
+          if (data.statusCode == 200 && data.user) {
+            // Sign in only from /login — register never returns a session token.
+            return { ok: true, needsEmailConfirmation: false }
+          }
+
+          return { ok: false, message: data.message || "Registration failed" }
         } catch (err) {
           console.error(err)
-          return false
+          return { ok: false, message: "An error occurred. Please try again." }
         }
       },
 
@@ -105,8 +141,29 @@ export const useAuth = create<AuthStore>()(
       },
 
       changePassword: async (oldPassword: string, newPassword: string) => {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        return true
+        try {
+          const token = localStorage.getItem("token")
+          if (!token) return false
+
+          const res = await fetch(`${BASE_URL}/auth/change-password`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              oldPassword,
+              newPassword,
+            }),
+          })
+
+          if (!res.ok) return false
+          const data = await res.json()
+          return data?.statusCode === 200
+        } catch (err) {
+          console.error(err)
+          return false
+        }
       },
     }),
     {

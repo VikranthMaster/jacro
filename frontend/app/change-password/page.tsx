@@ -9,6 +9,10 @@ import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
 import { useAuth } from "@/lib/auth"
 import { useCart } from "@/lib/cart"
+import {
+  PASSWORD_REQUIREMENTS_TEXT,
+  validatePasswordStrength,
+} from "@/lib/passwordPolicy"
 
 export default function ChangePasswordPage() {
   const router = useRouter()
@@ -41,8 +45,9 @@ export default function ChangePasswordPage() {
       return
     }
 
-    if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters")
+    const pwMsg = validatePasswordStrength(newPassword)
+    if (pwMsg) {
+      setError(pwMsg)
       return
     }
 
@@ -169,6 +174,14 @@ export default function ChangePasswordPage() {
                   >
                     {showNewPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
+                </div>
+                <div className="mt-2 rounded-md border border-[#E5E5E5] bg-[#FAFAFA] px-3 py-2">
+                  <p className="text-xs font-medium text-[#111111] mb-1">New password must include:</p>
+                  <ul className="text-xs text-[#6B6B6B] space-y-0.5 list-disc list-inside">
+                    {PASSWORD_REQUIREMENTS_TEXT.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
                 </div>
               </div>
 

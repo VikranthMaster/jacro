@@ -2,11 +2,15 @@
 
 import { useState } from "react"
 import { motion } from "framer-motion"
-import { Eye, EyeOff, Mail, Lock, User } from "lucide-react"
+import { Eye, EyeOff, Mail, Lock, User, Inbox } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth"
+import {
+  PASSWORD_REQUIREMENTS_TEXT,
+  validatePasswordStrength,
+} from "@/lib/passwordPolicy"
 
 export default function SignupPage() {
   const [name, setName] = useState("")
@@ -17,7 +21,8 @@ export default function SignupPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
-  
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+
   const router = useRouter()
   const { signup } = useAuth()
 
@@ -30,20 +35,25 @@ export default function SignupPage() {
       return
     }
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters")
+    const pwMsg = validatePasswordStrength(password)
+    if (pwMsg) {
+      setError(pwMsg)
       return
     }
 
     setIsLoading(true)
 
     try {
-      const success = await signup(name, email, password)
-      if (success) {
-        router.push("/")
-      } else {
-        setError("Email already exists")
+      const result = await signup(name, email, password)
+      if (result.ok && result.needsEmailConfirmation) {
+        setPendingEmail(result.email)
+        return
       }
+      if (result.ok) {
+        router.push("/login?registered=1")
+        return
+      }
+      setError(result.message)
     } catch {
       setError("An error occurred. Please try again.")
     } finally {
@@ -73,12 +83,57 @@ export default function SignupPage() {
 
         {/* Card */}
         <div className="bg-white rounded-lg shadow-lg p-8 border border-[#E5E5E5]">
+          {pendingEmail ? (
+            <>
+              <div className="flex justify-center mb-6">
+                <div className="rounded-full bg-[#F5F5DC] p-4">
+                  <Inbox className="w-10 h-10 text-[#C6A96B]" aria-hidden />
+                </div>
+              </div>
+              <h1 className="text-2xl font-serif text-center text-[#111111] mb-2">
+                Check your mail for verification
+              </h1>
+              <p className="text-center text-[#6B6B6B] text-sm mb-2 leading-relaxed">
+                We sent a verification link to{" "}
+                <span className="font-medium text-[#111111]">{pendingEmail}</span>. You are{" "}
+                <strong>not signed up</strong> in the app until you open that email and confirm.
+                After that, use <strong>Sign in</strong> with your password.
+              </p>
+              <p className="text-center text-[#6B6B6B] text-xs mb-8">
+                Didn&apos;t see it? Check spam or promotions, or wait a minute and try again.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Link
+                  href="/login"
+                  className="inline-flex justify-center items-center py-3 px-4 bg-[#111111] text-white text-sm font-medium rounded-md hover:bg-[#2a2a2a] transition-colors"
+                >
+                  Go to sign in
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingEmail(null)
+                    setError("")
+                  }}
+                  className="inline-flex justify-center items-center py-3 px-4 border border-[#E5E5E5] text-[#111111] text-sm font-medium rounded-md hover:bg-[#FAFAFA] transition-colors"
+                >
+                  Use a different email
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
           <h1 className="text-2xl font-serif text-center text-[#111111] mb-2">
             Create Account
           </h1>
-          <p className="text-center text-[#6B6B6B] text-sm mb-8">
+          <p className="text-center text-[#6B6B6B] text-sm mb-4">
             Join JACRO for exclusive access
           </p>
+          <div className="rounded-md border border-[#E8DFC8] bg-[#FAF6ED] text-[#5C5346] text-xs sm:text-sm px-4 py-3 mb-8 leading-relaxed">
+            <strong className="text-[#111111]">Email verification required.</strong> After you
+            submit, check your mail for a verification link. You won&apos;t be logged in and your
+            account won&apos;t count as active until you confirm — then sign in on the login page.
+          </div>
 
           {error && (
             <motion.div
@@ -169,6 +224,15 @@ export default function SignupPage() {
               </div>
             </div>
 
+            <div className="rounded-md border border-[#E5E5E5] bg-[#FAFAFA] px-4 py-3">
+              <p className="text-xs font-medium text-[#111111] mb-2">Password must include:</p>
+              <ul className="text-xs text-[#6B6B6B] space-y-1 list-disc list-inside">
+                {PASSWORD_REQUIREMENTS_TEXT.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </div>
+
             {/* Submit Button */}
             <motion.button
               type="submit"
@@ -188,6 +252,8 @@ export default function SignupPage() {
               Sign in
             </Link>
           </p>
+            </>
+          )}
         </div>
       </motion.div>
     </div>

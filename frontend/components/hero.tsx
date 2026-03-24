@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ArrowRight } from "lucide-react"
-import Link from "next/link"
+import { HashLink } from "@/components/hash-link"
 
 const dynamicWords = ["bold", "timeless", "modern"]
 
@@ -67,7 +67,7 @@ export function Hero() {
           transition={{ duration: 0.8, delay: 0.6 }}
           className="flex flex-col sm:flex-row gap-4 justify-center"
         >
-          <Link href="#collection">
+          <HashLink href="/#collection">
             <motion.button
               whileHover={{ scale: 1.02, boxShadow: "0 8px 30px rgba(0,0,0,0.12)" }}
               whileTap={{ scale: 0.98 }}
@@ -78,9 +78,9 @@ export function Hero() {
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </span>
             </motion.button>
-          </Link>
+          </HashLink>
 
-          <Link href="#categories">
+          <HashLink href="/#categories">
             <motion.button
               whileHover={{ scale: 1.02, backgroundColor: "#111111", color: "#FFFFFF" }}
               whileTap={{ scale: 0.98 }}
@@ -91,7 +91,7 @@ export function Hero() {
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </span>
             </motion.button>
-          </Link>
+          </HashLink>
         </motion.div>
       </div>
 

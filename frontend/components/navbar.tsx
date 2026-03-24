@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Search, ShoppingBag, User, Menu, X, Heart, Package, Lock, LogOut } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { HashLink } from "@/components/hash-link"
 import { useAuth } from "@/lib/auth"
 import { useWishlist } from "@/lib/wishlist"
 
@@ -13,12 +15,19 @@ interface NavbarProps {
 }
 
 export function Navbar({ cartCount = 0 }: NavbarProps) {
+  const router = useRouter()
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isProfileOpen, setIsProfileOpen] = useState(false)
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [searchInput, setSearchInput] = useState("")
   const profileRef = useRef<HTMLDivElement>(null)
   
   const { isAuthenticated, user, logout } = useAuth()
+  const displayName =
+    user?.name && user.name.trim().toLowerCase() !== "user"
+      ? user.name
+      : (user?.email?.split("@")[0] ?? "Account")
   const wishlistCount = useWishlist((state) => state.items.length)
   const fetchWishlist = useWishlist((state) => state.fetchWishlist)
 
@@ -49,6 +58,12 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
   const handleLogout = () => {
     logout()
     setIsProfileOpen(false)
+  }
+
+  const submitSearch = () => {
+    const q = searchInput.trim()
+    setIsSearchOpen(false)
+    router.push(q ? `/?q=${encodeURIComponent(q)}` : "/")
   }
 
   return (
@@ -94,9 +109,14 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-8">
-              <NavLink href="#new">New Arrivals</NavLink>
-              <NavLink href="#collection">Collection</NavLink>
-              <NavLink href="#about">About</NavLink>
+              <NavHashLink href="/#new">New Arrivals</NavHashLink>
+              <NavHashLink href="/#collection">Collection</NavHashLink>
+              <Link
+                href="/about"
+                className="text-sm text-[#111111]/60 hover:text-[#111111] tracking-[0.1em] uppercase transition-colors duration-300"
+              >
+                About
+              </Link>
             </div>
 
             {/* Icons */}
@@ -104,6 +124,8 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
               <motion.button
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
+                type="button"
+                onClick={() => setIsSearchOpen(true)}
                 className="hidden sm:block text-[#111111]/60 hover:text-[#111111] transition-colors"
                 aria-label="Search"
               >
@@ -168,7 +190,7 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
                       >
                         {/* User Info */}
                         <div className="px-4 py-3 border-b border-[#E5E5E5]">
-                          <p className="text-sm font-medium text-[#111111]">{user?.name}</p>
+                          <p className="text-sm font-medium text-[#111111]">{displayName}</p>
                           <p className="text-xs text-[#6B6B6B]">{user?.email}</p>
                         </div>
                         
@@ -227,6 +249,45 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
 
       {/* Mobile Menu */}
       <AnimatePresence>
+        {isSearchOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] bg-black/40 flex items-start justify-center pt-24 px-4"
+            onClick={() => setIsSearchOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: -12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              className="w-full max-w-lg bg-white border border-[#E5E5E5] rounded-lg shadow-lg p-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <label className="text-xs text-[#6B6B6B] tracking-wide uppercase block mb-2">Search</label>
+              <div className="flex gap-2">
+                <input
+                  autoFocus
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitSearch()}
+                  placeholder="Search products…"
+                  className="flex-1 border border-[#E5E5E5] rounded-md px-3 py-2 text-sm text-[#111111] focus:outline-none focus:border-[#C6A96B]"
+                />
+                <button
+                  type="button"
+                  onClick={submitSearch}
+                  className="px-4 py-2 bg-[#111111] text-white text-sm rounded-md hover:bg-[#2a2a2a]"
+                >
+                  Go
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {isMobileMenuOpen && (
           <motion.div
             initial={{ opacity: 0, x: "-100%" }}
@@ -236,13 +297,13 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
             className="fixed inset-0 z-40 bg-[#F5F5DC] pt-20 px-6 md:hidden"
           >
             <nav className="flex flex-col gap-6">
-              <MobileNavLink href="#new" onClick={() => setIsMobileMenuOpen(false)}>
+              <MobileHashNavLink href="/#new" onClick={() => setIsMobileMenuOpen(false)}>
                 New Arrivals
-              </MobileNavLink>
-              <MobileNavLink href="#collection" onClick={() => setIsMobileMenuOpen(false)}>
+              </MobileHashNavLink>
+              <MobileHashNavLink href="/#collection" onClick={() => setIsMobileMenuOpen(false)}>
                 Collection
-              </MobileNavLink>
-              <MobileNavLink href="#about" onClick={() => setIsMobileMenuOpen(false)}>
+              </MobileHashNavLink>
+              <MobileNavLink href="/about" onClick={() => setIsMobileMenuOpen(false)}>
                 About
               </MobileNavLink>
               
@@ -293,14 +354,14 @@ export function Navbar({ cartCount = 0 }: NavbarProps) {
   )
 }
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavHashLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link
+    <HashLink
       href={href}
       className="text-sm text-[#111111]/60 hover:text-[#111111] tracking-[0.1em] uppercase transition-colors duration-300"
     >
       {children}
-    </Link>
+    </HashLink>
   )
 }
 
@@ -321,6 +382,26 @@ function MobileNavLink({
     >
       {children}
     </Link>
+  )
+}
+
+function MobileHashNavLink({
+  href,
+  children,
+  onClick,
+}: {
+  href: string
+  children: React.ReactNode
+  onClick: () => void
+}) {
+  return (
+    <HashLink
+      href={href}
+      onClick={onClick}
+      className="w-full text-left text-lg font-serif text-[#111111]/80 hover:text-[#111111] tracking-[0.06em] transition-colors py-2 block"
+    >
+      {children}
+    </HashLink>
   )
 }
 

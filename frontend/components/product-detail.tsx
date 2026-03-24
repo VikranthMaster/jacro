@@ -5,7 +5,9 @@ import { motion } from "framer-motion"
 import Image from "next/image"
 import { ChevronLeft, Minus, Plus, ShoppingBag, Heart } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useCart } from "@/lib/cart"
+import { useWishlist } from "@/lib/wishlist"
 import { toast } from "@/hooks/use-toast"
 
 interface ProductDetailProps {
@@ -22,6 +24,7 @@ interface ProductDetailProps {
 }
 
 export function ProductDetail({ product }: ProductDetailProps) {
+  const router = useRouter()
   const [selectedImage, setSelectedImage] = useState(0)
   const images = product.images ?? []
   const colors = product.colors ?? []
@@ -30,7 +33,10 @@ export function ProductDetail({ product }: ProductDetailProps) {
   const [selectedSize, setSelectedSize] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [isAdding, setIsAdding] = useState(false)
+  const [isBuying, setIsBuying] = useState(false)
   const { addItem } = useCart()
+  const { isInWishlist, toggleItem } = useWishlist()
+  const wishlisted = isInWishlist(product.id)
 
   const handleAddToCart = async () => {
     if (!selectedSize) {
@@ -65,6 +71,69 @@ export function ProductDetail({ product }: ProductDetailProps) {
       })
     } finally {
       setIsAdding(false)
+    }
+  }
+
+  const handleBuyNow = async () => {
+    if (!selectedSize) {
+      alert("Please select a size")
+      return
+    }
+    const userId = localStorage.getItem("user_id")
+    if (!userId) {
+      alert("Please log in to continue")
+      return
+    }
+    setIsBuying(true)
+    try {
+      await addItem(userId, {
+        product_id: product.id,
+        quantity,
+        size: selectedSize,
+        color: selectedColor,
+      })
+      toast({
+        title: "Ready for checkout",
+        description: product.name,
+      })
+      router.push("/transactions")
+    } catch (err) {
+      console.error(err)
+      toast({
+        title: "Could not continue",
+        description: "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsBuying(false)
+    }
+  }
+
+  const handleWishlist = async () => {
+    const userId = localStorage.getItem("user_id")
+    if (!userId) {
+      alert("Please log in to save items to your wishlist")
+      return
+    }
+    try {
+      await toggleItem(userId, {
+        id: product.id,
+        name: product.name,
+        price: product.price,
+        image: images[0] || "",
+        category: product.category,
+      })
+      toast({
+        title: wishlisted ? "Removed from wishlist" : "Added to wishlist",
+        description: product.name,
+      })
+    } catch (err) {
+      console.error(err)
+      toast({
+        title: "Wishlist update failed",
+        description: "Please try again.",
+        variant: "destructive",
+      })
     }
   }
 
@@ -243,16 +312,17 @@ export function ProductDetail({ product }: ProductDetailProps) {
                 className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-[#111111] text-white text-sm tracking-[0.15em] uppercase font-medium transition-all rounded-sm disabled:opacity-70"
               >
                 <ShoppingBag className="w-4 h-4" />
-                {isAdding ? "Added!" : "Add to Cart"}
+                {isAdding ? "Adding…" : "Add to Cart"}
               </motion.button>
 
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
+                onClick={handleWishlist}
                 className="flex items-center justify-center gap-3 px-6 py-4 border border-[#E5E5E5] bg-white text-[#111111] text-sm tracking-[0.15em] uppercase transition-all hover:border-[#111111]/30 rounded-sm"
               >
-                <Heart className="w-4 h-4" />
-                <span className="sm:hidden">Save</span>
+                <Heart className={`w-4 h-4 ${wishlisted ? "fill-[#C6A96B] text-[#C6A96B]" : ""}`} />
+                <span>{wishlisted ? "Wishlisted" : "Add to Wishlist"}</span>
               </motion.button>
             </div>
 
@@ -260,9 +330,12 @@ export function ProductDetail({ product }: ProductDetailProps) {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              className="w-full px-6 py-4 bg-[#C6A96B] text-white text-sm tracking-[0.15em] uppercase font-medium transition-all hover:bg-[#B89B50] rounded-sm"
+              type="button"
+              onClick={handleBuyNow}
+              disabled={isBuying}
+              className="w-full px-6 py-4 bg-[#C6A96B] text-white text-sm tracking-[0.15em] uppercase font-medium transition-all hover:bg-[#B89B50] rounded-sm disabled:opacity-70"
             >
-              Buy Now
+              {isBuying ? "Going to checkout…" : "Buy Now"}
             </motion.button>
           </motion.div>
         </div>
