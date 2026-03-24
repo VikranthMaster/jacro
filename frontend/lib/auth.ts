@@ -19,6 +19,7 @@ interface AuthStore {
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>
 }
 
+const BASE_URL = "http://localhost:8001";
 
 
 export const useAuth = create<AuthStore>()(
@@ -29,7 +30,7 @@ export const useAuth = create<AuthStore>()(
 
       login: async (email: string, password: string) => {
         try {
-          const res = await fetch("http://localhost:8001/login", {
+          const res = await fetch(`${BASE_URL}/login`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -63,7 +64,7 @@ export const useAuth = create<AuthStore>()(
 
       signup: async (name: string, email: string, password: string) => {
         try {
-          const res = await fetch("http://localhost:8001/register", {
+          const res = await fetch(`${BASE_URL}/register`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -104,9 +105,7 @@ export const useAuth = create<AuthStore>()(
       },
 
       changePassword: async (oldPassword: string, newPassword: string) => {
-        // Simulate API call
         await new Promise((resolve) => setTimeout(resolve, 500))
-        // In a real app, validate old password and update
         return true
       },
     }),
