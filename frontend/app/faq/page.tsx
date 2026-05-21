@@ -19,7 +19,7 @@ const items = [
   },
   {
     q: "What payment methods do you accept?",
-    a: "We accept major cards and other methods as shown at checkout. Your payment is processed securely through our payment partner.",
+    a: "We accept UPI, cards, netbanking, and wallets at checkout. Payments are processed securely through Razorpay.",
   },
   {
     q: "How do I find my size?",

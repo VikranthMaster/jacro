@@ -5,6 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { Heart } from "lucide-react"
 import { useWishlist } from "@/lib/wishlist"
+import { formatPrice } from "@/lib/currency"
 
 export interface Product {
   id: string
@@ -100,7 +101,7 @@ export function ProductCard({ product, index = 0 }: ProductCardProps) {
             {product.name}
           </h3>
           <p className="text-[#111111]/70 text-sm">
-            ${product.price.toLocaleString()}
+            {formatPrice(product.price)}
           </p>
         </div>
       </Link>

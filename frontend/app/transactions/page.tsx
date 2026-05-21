@@ -5,11 +5,14 @@ import type { ReactNode } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { motion } from "framer-motion"
-import { ArrowLeft, Loader2, Truck } from "lucide-react"
+import { ArrowLeft, Loader2 } from "lucide-react"
+import { OrderSuccessScreen } from "@/components/order-success-screen"
 import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
 import { useAuth } from "@/lib/auth"
 import { useCart } from "@/lib/cart"
+import { calcShipping, formatPrice, SHIPPING_CHARGES_ENABLED } from "@/lib/currency"
+import { openRazorpayCheckout } from "@/lib/razorpay"
 import { toast } from "@/hooks/use-toast"
 
 const BASE_URL = "http://localhost:8001"
@@ -25,6 +28,21 @@ type Address = {
   country: string
 }
 
+type CheckoutPlaceResponse = {
+  statusCode: number
+  order_id?: string
+  message?: string
+  razorpay?: {
+    key_id: string
+    order_id: string
+    amount: number
+    currency: string
+    name?: string
+    description?: string
+    prefill?: { name?: string; email?: string; contact?: string }
+  }
+}
+
 export default function TransactionsPage() {
   const router = useRouter()
   const { isAuthenticated } = useAuth()
@@ -36,7 +54,7 @@ export default function TransactionsPage() {
   const [sameAsShipping, setSameAsShipping] = useState(true)
 
   const subtotal = useMemo(() => getTotal(), [items, getTotal])
-  const shipping = useMemo(() => (subtotal > 500 ? 0 : 25), [subtotal])
+  const shipping = useMemo(() => calcShipping(subtotal), [subtotal])
   const total = subtotal + shipping
 
   const [shippingAddress, setShippingAddress] = useState<Address>({
@@ -47,7 +65,7 @@ export default function TransactionsPage() {
     city: "",
     state: "",
     postal_code: "",
-    country: "United States",
+    country: "India",
   })
 
   const [billingAddress, setBillingAddress] = useState<Address>({
@@ -58,7 +76,7 @@ export default function TransactionsPage() {
     city: "",
     state: "",
     postal_code: "",
-    country: "United States",
+    country: "India",
   })
 
   useEffect(() => {
@@ -116,36 +134,90 @@ export default function TransactionsPage() {
         }),
       })
 
-      const data = await res.json()
-      if (!res.ok || data.statusCode !== 200) {
+      const data: CheckoutPlaceResponse = await res.json()
+      if (!res.ok || data.statusCode !== 200 || !data.razorpay || !data.order_id) {
         throw new Error(data?.message || "Checkout failed")
       }
 
-      setOrderId(data.order_id)
-      clearCart()
+      const { razorpay } = data
+      const orderIdLocal = data.order_id
 
-      toast({
-        title: "Order created",
-        description: "Payment integration later. Your transaction is pending.",
+      await openRazorpayCheckout({
+        key: razorpay.key_id,
+        amount: razorpay.amount,
+        currency: razorpay.currency,
+        name: razorpay.name || "JACRO",
+        description: razorpay.description,
+        order_id: razorpay.order_id,
+        prefill: razorpay.prefill,
+        theme: { color: "#111111" },
+        handler: async (response) => {
+          try {
+            const verifyRes = await fetch(`${BASE_URL}/payments/razorpay/verify`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                order_id: orderIdLocal,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            })
+            const verifyData = await verifyRes.json()
+            if (!verifyRes.ok || verifyData.statusCode !== 200) {
+              const msg =
+                typeof verifyData?.message === "string"
+                  ? verifyData.message
+                  : "Payment verification failed"
+              throw new Error(msg)
+            }
+
+            setOrderId(orderIdLocal)
+            clearCart()
+          } catch (verifyErr: unknown) {
+            console.error(verifyErr)
+            toast({
+              title: "Payment received",
+              description:
+                "We could not confirm your payment automatically. Check Orders or contact support with your payment ID.",
+              variant: "destructive",
+            })
+          } finally {
+            setBusy(false)
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setBusy(false)
+            toast({
+              title: "Payment cancelled",
+              description:
+                "Your order was saved as unpaid. You can complete payment from Orders when retry is available.",
+            })
+          },
+        },
       })
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e)
+      const message = e instanceof Error ? e.message : "Please try again."
       toast({
         title: "Checkout failed",
-        description: "Please try again.",
+        description: message,
         variant: "destructive",
       })
-    } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F5DC]">
+    <motion.div className="min-h-screen bg-[#F5F5DC]">
       <Navbar cartCount={mounted ? items.reduce((c, it) => c + it.quantity, 0) : 0} />
 
       <main className="pt-24 pb-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <motion.div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -160,47 +232,20 @@ export default function TransactionsPage() {
             </Link>
 
             <h1 className="font-serif text-3xl md:text-4xl text-[#111111]">Checkout</h1>
-            <p className="text-[#6B6B6B] mt-2">Transactions will be integrated with a payment app later.</p>
+            <p className="text-[#6B6B6B] mt-2">
+              Pay securely with UPI, cards, netbanking, and wallets via Razorpay.
+            </p>
           </motion.div>
 
           {orderId ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white border border-[#E5E5E5] rounded-sm p-6 md:p-8"
-            >
-              <div className="flex items-center gap-3 text-[#111111]">
-                <div className="w-12 h-12 rounded-sm bg-[#EFE8D8] flex items-center justify-center">
-                  <Truck className="w-5 h-5 text-[#111111]" />
-                </div>
-                <div>
-                  <h2 className="font-serif text-2xl">Transaction created</h2>
-                  <p className="text-[#6B6B6B]">Order ID: {orderId}</p>
-                </div>
-              </div>
-
-              <div className="mt-8 flex gap-3 flex-col sm:flex-row">
-                <Link
-                  href="/orders"
-                  className="flex-1 text-center px-6 py-4 bg-[#111111] text-white text-sm tracking-[0.15em] uppercase font-medium rounded-sm hover:bg-[#111111]/90 transition-colors"
-                >
-                  Go to Orders
-                </Link>
-                <Link
-                  href="/#collection"
-                  className="flex-1 text-center px-6 py-4 border border-[#E5E5E5] text-[#111111] text-sm tracking-[0.15em] uppercase font-medium rounded-sm hover:border-[#111111]/30 transition-colors"
-                >
-                  Continue Shopping
-                </Link>
-              </div>
-            </motion.div>
+            <OrderSuccessScreen orderId={orderId} redirectSeconds={7} />
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
               <div className="lg:col-span-2">
                 <div className="bg-white border border-[#E5E5E5] rounded-sm p-6 md:p-8">
                   <h2 className="font-serif text-xl text-[#111111] mb-6">Shipping Address</h2>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <motion.div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <Field label="Recipient name">
                       <input
                         value={shippingAddress.recipient_name}
@@ -215,7 +260,7 @@ export default function TransactionsPage() {
                         className="w-full border border-[#E5E5E5] rounded-md px-3 py-2 bg-white text-[#111111] focus:outline-none focus:border-[#C6A96B]"
                       />
                     </Field>
-                  </div>
+                  </motion.div>
 
                   <div className="mt-4">
                     <Field label="Address line 1">
@@ -251,7 +296,7 @@ export default function TransactionsPage() {
                         className="w-full border border-[#E5E5E5] rounded-md px-3 py-2 bg-white text-[#111111] focus:outline-none focus:border-[#C6A96B]"
                       />
                     </Field>
-                    <Field label="ZIP (optional)">
+                    <Field label="PIN (optional)">
                       <input
                         value={shippingAddress.postal_code ?? ""}
                         onChange={(e) => setShippingAddress((s) => ({ ...s, postal_code: e.target.value }))}
@@ -260,7 +305,7 @@ export default function TransactionsPage() {
                     </Field>
                   </div>
 
-                  <div className="mt-4">
+                  <motion.div className="mt-4">
                     <Field label="Country">
                       <input
                         value={shippingAddress.country}
@@ -268,7 +313,7 @@ export default function TransactionsPage() {
                         className="w-full border border-[#E5E5E5] rounded-md px-3 py-2 bg-white text-[#111111] focus:outline-none focus:border-[#C6A96B]"
                       />
                     </Field>
-                  </div>
+                  </motion.div>
 
                   <div className="mt-8 border-t border-[#E5E5E5] pt-6">
                     <label className="flex items-center gap-3 text-[#111111]">
@@ -335,7 +380,7 @@ export default function TransactionsPage() {
                             className="w-full border border-[#E5E5E5] rounded-md px-3 py-2 bg-white text-[#111111] focus:outline-none focus:border-[#C6A96B]"
                           />
                         </Field>
-                        <Field label="ZIP (optional)">
+                        <Field label="PIN (optional)">
                           <input
                             value={billingAddress.postal_code ?? ""}
                             onChange={(e) => setBillingAddress((s) => ({ ...s, postal_code: e.target.value }))}
@@ -368,25 +413,27 @@ export default function TransactionsPage() {
                   <h2 className="font-serif text-xl text-[#111111] mb-6">Order Summary</h2>
 
                   {loading ? (
-                    <div className="text-[#6B6B6B]">Loading cart...</div>
+                    <motion.div className="text-[#6B6B6B]">Loading cart...</motion.div>
                   ) : items.length === 0 ? (
-                    <div className="text-[#6B6B6B]">Your cart is empty.</div>
+                    <motion.div className="text-[#6B6B6B]">Your cart is empty.</motion.div>
                   ) : (
                     <div className="space-y-4 text-sm">
-                      <div className="flex justify-between text-[#6B6B6B]">
+                      <motion.div className="flex justify-between text-[#6B6B6B]">
                         <span>Subtotal</span>
-                        <span>${subtotal.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between text-[#6B6B6B]">
-                        <span>Shipping</span>
-                        <span>{shipping === 0 ? "Free" : `$${shipping}`}</span>
-                      </div>
-                      <div className="border-t border-[#E5E5E5] pt-4">
+                        <span>{formatPrice(subtotal)}</span>
+                      </motion.div>
+                      {SHIPPING_CHARGES_ENABLED && (
+                        <motion.div className="flex justify-between text-[#6B6B6B]">
+                          <span>Shipping</span>
+                          <span>{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
+                        </motion.div>
+                      )}
+                      <motion.div className="border-t border-[#E5E5E5] pt-4">
                         <div className="flex justify-between text-[#111111] font-medium text-base">
                           <span>Total</span>
-                          <span>${total.toLocaleString()}</span>
+                          <span>{formatPrice(total)}</span>
                         </div>
-                      </div>
+                      </motion.div>
 
                       <motion.button
                         whileHover={{ scale: 1.02 }}
@@ -395,11 +442,11 @@ export default function TransactionsPage() {
                         onClick={handlePlaceOrder}
                         className="w-full mt-6 py-4 bg-[#111111] text-white text-sm tracking-[0.15em] uppercase font-medium rounded-sm flex items-center justify-center gap-2 hover:bg-[#111111]/90 transition-colors disabled:opacity-70"
                       >
-                        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Place Order"}
+                        {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Pay with Razorpay"}
                       </motion.button>
 
                       <p className="text-xs text-[#6B6B6B] text-center mt-4">
-                        Payment provider integration will be connected later.
+                        Secured by Razorpay. Your cart is cleared only after successful payment.
                       </p>
                     </div>
                   )}
@@ -407,11 +454,11 @@ export default function TransactionsPage() {
               </div>
             </div>
           )}
-        </div>
+        </motion.div>
       </main>
 
       <Footer />
-    </div>
+    </motion.div>
   )
 }
 
@@ -423,4 +470,3 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     </label>
   )
 }
-

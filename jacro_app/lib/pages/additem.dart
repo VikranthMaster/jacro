@@ -26,7 +26,6 @@ class _AdditemState extends State<Additem> {
 
   /// Pick up to 3 images
   Future<void> _pickImage() async {
-    if (_images.length >= 3) return;
 
     final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
@@ -43,8 +42,7 @@ class _AdditemState extends State<Additem> {
   Future<void> _uploadProduct() async {
     if (name.text.isEmpty ||
         desc.text.isEmpty ||
-        price.text.isEmpty ||
-        _images.length < 3) {
+        price.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("⚠️ Please fill all fields & pick 3 images"),
@@ -54,7 +52,7 @@ class _AdditemState extends State<Additem> {
     }
 
     try {
-      var uri = Uri.parse("http://10.0.2.2:8000/add_product");
+      var uri = Uri.parse("https://thejacro.co.in/api/add_product");
 
       var request = http.MultipartRequest("POST", uri);
 

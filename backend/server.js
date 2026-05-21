@@ -15,10 +15,27 @@ import {
 import { botBlocker } from "./middleware/botBlocker.js"
 import { verifyCaptcha } from "./utils/captcha.js"
 import { validatePasswordStrength } from "./utils/passwordPolicy.js"
+import {
+  createRazorpayOrder,
+  fetchRazorpayOrderPayments,
+  fetchRazorpayPayment,
+  formatRazorpayError,
+  getRazorpayKeyId,
+  isRazorpayConfigured,
+  toRazorpayAmount,
+  verifyPaymentSignature,
+} from "./utils/razorpay.js"
 import dotenv from "dotenv";
 dotenv.config();
 
 const PORT = Number(process.env.PORT) || 8001
+const CHECKOUT_CURRENCY = (
+  process.env.CHECKOUT_CURRENCY || "INR"
+).toUpperCase()
+/** Set true to charge shipping again at checkout */
+const SHIPPING_CHARGES_ENABLED = false
+const FREE_SHIPPING_MIN = Number(process.env.FREE_SHIPPING_MIN) || 5000
+const SHIPPING_FEE = Number(process.env.SHIPPING_FEE) || 199
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
   // process.env.SUPABASE_URL || "https://dnyuomscigxcyibonylq.supabase.co"
@@ -30,12 +47,27 @@ const SV_KEY =
 const supabase = createClient(SUPABASE_URL, SV_KEY)
 
 const app = express()
+
+if (isRazorpayConfigured()) {
+  const key = getRazorpayKeyId() || ""
+  console.log(
+    `Razorpay: configured (${key.startsWith("rzp_test_") ? "test" : key.startsWith("rzp_live_") ? "live" : "unknown"} mode)`
+  )
+} else {
+  console.warn("Razorpay: RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing in .env")
+}
+
 app.use(
   cors({
-    origin: "*",
+    origin: true,
     credentials: true,
-    methods: ["*"],
-    allowedHeaders: ["*"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+    ],
   })
 )
 app.use(express.json())
@@ -114,36 +146,78 @@ function formatAddressLines(addr) {
   return parts
 }
 
-async function sendOrderEmail({ to, orderId, totalAmount, currency, status }) {
+function getBrandLogoUrl() {
+  const base =
+    process.env.FRONTEND_URL ||
+    process.env.PUBLIC_APP_URL ||
+    "http://localhost:3000"
+  return `${String(base).replace(/\/$/, "")}/icon.svg`
+}
+
+const PAID_ORDER_STATUS = "confirmed"
+
+async function sendCustomerOrderPlacedEmail({
+  to,
+  orderId,
+  totalAmount,
+  currency,
+  customerName,
+}) {
   try {
     if (!to) return false
     const transporter = getMailTransporter()
     if (!transporter) {
-      console.warn("Order email skipped: SMTP config missing")
+      console.warn("Customer order email skipped: SMTP config missing")
       return false
     }
     const from = process.env.SMTP_FROM || process.env.SMTP_USER
+    const cur = currency || CHECKOUT_CURRENCY
+    const total = Number(totalAmount || 0).toLocaleString("en-IN")
+    const logoUrl = getBrandLogoUrl()
+    const greeting = customerName ? `Hi ${escapeHtml(customerName)},` : "Hi there,"
+
     await transporter.sendMail({
       from,
       to,
-      subject: `Order ${orderId} confirmed`,
-      text: `Your order is confirmed.\nOrder ID: ${orderId}\nStatus: ${status}\nTotal: ${currency} ${Number(
-        totalAmount || 0
-      ).toFixed(2)}\n\nThanks for shopping with JACRO.`,
+      subject: `Your JACRO order is confirmed — ${orderId.slice(0, 8)}`,
+      text: `Thank you for your order with JACRO.
+
+Order number: ${orderId}
+Total: ${cur} ${total}
+
+Your order is confirmed. Shipping usually arrives in 4–5 business days.
+
+— JACRO`,
       html: `
-        <div style="font-family: Arial, sans-serif; line-height:1.5;">
-          <h2>Order Confirmed</h2>
-          <p>Your order has been confirmed.</p>
-          <p><strong>Order ID:</strong> ${orderId}</p>
-          <p><strong>Status:</strong> ${status}</p>
-          <p><strong>Total:</strong> ${currency} ${Number(totalAmount || 0).toFixed(2)}</p>
-          <p>Thanks for shopping with JACRO.</p>
+        <div style="font-family: Georgia, 'Times New Roman', serif; background:#F5F5DC; padding:32px 16px;">
+          <motion.div style="max-width:520px; margin:0 auto; background:#ffffff; border:1px solid #E5E5E5; border-radius:4px; overflow:hidden;">
+            <div style="background:#111111; padding:28px 24px; text-align:center;">
+              <img src="${logoUrl}" alt="JACRO" width="56" height="56" style="display:block; margin:0 auto 12px; border-radius:8px;" />
+              <p style="margin:0; color:#F5F5DC; font-size:22px; letter-spacing:0.2em;">JACRO</p>
+            </div>
+            <div style="padding:28px 24px; color:#111111; line-height:1.6;">
+              <p style="margin:0 0 16px; font-size:16px;">${greeting}</p>
+              <p style="margin:0 0 20px; color:#6B6B6B;">Thank you for your order. We're getting it ready for you.</p>
+              <p style="margin:0 0 8px; font-size:13px; color:#6B6B6B; text-transform:uppercase; letter-spacing:0.1em;">Order number</p>
+              <p style="margin:0 0 20px; font-family:monospace; font-size:14px; word-break:break-all;">${escapeHtml(orderId)}</p>
+              <p style="margin:0 0 24px; font-size:18px;"><strong>Total:</strong> ${escapeHtml(cur)} ${escapeHtml(total)}</p>
+              <div style="background:#EFE8D8; border-radius:4px; padding:16px 18px; margin-bottom:24px;">
+                <p style="margin:0; font-size:15px; color:#111111;">
+                  <strong>Delivery:</strong> Your shipping should arrive in <strong>4–5 business days</strong>.
+                </p>
+              </div>
+              <p style="margin:0; color:#6B6B6B; font-size:14px;">We'll send another update when your order ships.</p>
+            </div>
+            <div style="padding:16px 24px; border-top:1px solid #E5E5E5; text-align:center; color:#6B6B6B; font-size:12px;">
+              © JACRO
+            </div>
+          </div>
         </div>
-      `,
+      `.replace(/<motion\.div/g, "<div"),
     })
     return true
   } catch (e) {
-    console.error("send_order_email:", e)
+    console.error("send_customer_order_email:", e)
     return false
   }
 }
@@ -1016,9 +1090,20 @@ async function placeCheckout(req, res) {
       return res.json({ statusCode: 400, message: "No valid cart items" })
     }
 
-    const shippingAmount = subtotal > 500 ? 0 : 25
+    const shippingAmount = SHIPPING_CHARGES_ENABLED
+      ? subtotal > FREE_SHIPPING_MIN
+        ? 0
+        : SHIPPING_FEE
+      : 0
     const taxAmount = 0
     const totalAmount = subtotal + shippingAmount + taxAmount
+
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        statusCode: 503,
+        message: "Payment service is not configured",
+      })
+    }
 
     const orderId = uuidv4()
 
@@ -1026,9 +1111,9 @@ async function placeCheckout(req, res) {
       id: orderId,
       user_id,
       cart_id: cartId,
-      order_status: "processing",
+      order_status: "pending_payment",
       payment_status: "unpaid",
-      currency: "USD",
+      currency: CHECKOUT_CURRENCY,
       subtotal,
       shipping_amount: shippingAmount,
       tax_amount: taxAmount,
@@ -1078,16 +1163,57 @@ async function placeCheckout(req, res) {
       country: billing.country,
     })
 
+    let userEmail = null
+    let userName = null
+    try {
+      const { data: userRow } = await supabase.auth.admin.getUserById(user_id)
+      userEmail = userRow?.user?.email || null
+      userName =
+        userRow?.user?.user_metadata?.full_name ||
+        userRow?.user?.user_metadata?.name ||
+        null
+    } catch (emailLookupErr) {
+      console.error("checkout_user_email_lookup:", emailLookupErr)
+    }
+
+    let razorpayOrder
+    try {
+      const created = await createRazorpayOrder({
+        amountMajor: totalAmount,
+        currency: CHECKOUT_CURRENCY,
+        receipt: orderId,
+        notes: { order_id: orderId, user_id },
+      })
+      razorpayOrder = created.order
+    } catch (rzErr) {
+      const rzMessage = formatRazorpayError(rzErr)
+      const status = rzErr?.response?.status
+      console.error("razorpay_create_order:", status, rzMessage, rzErr?.response?.data)
+      await supabase.from("order_items").delete().eq("order_id", orderId)
+      await supabase.from("order_addresses").delete().eq("order_id", orderId)
+      await supabase.from("orders").delete().eq("id", orderId)
+
+      const isAuthError =
+        status === 401 ||
+        /authentication failed/i.test(rzMessage)
+      return res.status(502).json({
+        statusCode: 502,
+        message: isAuthError
+          ? "Payment gateway credentials are invalid. Update RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in backend/.env from the Razorpay Dashboard (Settings → API Keys), then restart the server."
+          : `Could not start payment: ${rzMessage}`,
+      })
+    }
+
     const paymentId = uuidv4()
 
     await supabase.from("payments").insert({
       id: paymentId,
       order_id: orderId,
-      provider: "manual",
+      provider: "razorpay",
+      provider_payment_intent_id: razorpayOrder.id,
       status: "requires_payment_method",
-      method: "manual",
       amount: totalAmount,
-      currency: "USD",
+      currency: CHECKOUT_CURRENCY,
     })
 
     await supabase.from("transactions").insert({
@@ -1096,49 +1222,30 @@ async function placeCheckout(req, res) {
       transaction_type: "payment_attempt",
       status: "created",
       amount: totalAmount,
-      currency: "USD",
-      raw: null,
+      currency: CHECKOUT_CURRENCY,
+      raw: { razorpay_order_id: razorpayOrder.id },
     })
 
-    await supabase.from("cart_items").delete().eq("cart_id", cartId)
-
-    let userEmail = null
-    try {
-      const { data: userRow } = await supabase.auth.admin.getUserById(user_id)
-      userEmail = userRow?.user?.email || null
-    } catch (emailLookupErr) {
-      console.error("checkout_user_email_lookup:", emailLookupErr)
-    }
-
-    await sendOrderEmail({
-      to: userEmail,
-      orderId,
-      totalAmount,
-      currency: "USD",
-      status: "processing",
+    return res.json({
+      statusCode: 200,
+      order_id: orderId,
+      payment_id: paymentId,
+      currency: CHECKOUT_CURRENCY,
+      amount: totalAmount,
+      razorpay: {
+        key_id: getRazorpayKeyId(),
+        order_id: razorpayOrder.id,
+        amount: toRazorpayAmount(totalAmount, CHECKOUT_CURRENCY),
+        currency: CHECKOUT_CURRENCY,
+        name: "JACRO",
+        description: `Order ${orderId.slice(0, 8)}`,
+        prefill: {
+          name: shipping_address.recipient_name || userName || undefined,
+          email: userEmail || undefined,
+          contact: shipping_address.phone || undefined,
+        },
+      },
     })
-
-    const billingSameAsShipping = !billing_address
-
-    void sendOwnerNewOrderEmail({
-      orderId,
-      customerName: shipping_address?.recipient_name,
-      customerEmail: userEmail,
-      userId: user_id,
-      currency: "USD",
-      subtotal,
-      shippingAmount,
-      taxAmount,
-      totalAmount,
-      orderStatus: "processing",
-      paymentStatus: "unpaid",
-      orderLines,
-      shippingAddress: shipping_address,
-      billingAddress: billing,
-      billingSameAsShipping,
-    })
-
-    return res.json({ statusCode: 200, order_id: orderId })
   } catch (e) {
     console.error("place_checkout:", e)
     return res.json({ statusCode: 500, message: String(e) })
@@ -1153,6 +1260,499 @@ app.post(
   requireCaptcha,
   placeCheckout
 )
+
+app.get("/payments/razorpay/config", (_req, res) => {
+  if (!isRazorpayConfigured()) {
+    return res.status(503).json({
+      statusCode: 503,
+      message: "Payment service is not configured",
+    })
+  }
+  return res.json({
+    statusCode: 200,
+    key_id: getRazorpayKeyId(),
+    currency: CHECKOUT_CURRENCY,
+  })
+})
+
+async function loadOrderContext(orderId) {
+  const { data: orderItems } = await supabase
+    .from("order_items")
+    .select("product_name, unit_price, quantity, size, color")
+    .eq("order_id", orderId)
+
+  const { data: addrRows } = await supabase
+    .from("order_addresses")
+    .select("*")
+    .eq("order_id", orderId)
+
+  const shippingAddress = (addrRows || []).find(
+    (a) => a.address_type === "shipping"
+  )
+  const billingAddress = (addrRows || []).find(
+    (a) => a.address_type === "billing"
+  )
+
+  return { orderItems: orderItems || [], shippingAddress, billingAddress }
+}
+
+async function finalizePaidOrder({
+  orderRow,
+  paymentRow,
+  razorpay_order_id,
+  razorpay_payment_id,
+  rzPayment,
+  sendEmails = true,
+}) {
+  const order_id = orderRow.id
+  const user_id = orderRow.user_id
+  const currency = orderRow.currency || CHECKOUT_CURRENCY
+
+  await supabase
+    .from("orders")
+    .update({
+      payment_status: "paid",
+      order_status: PAID_ORDER_STATUS,
+    })
+    .eq("id", order_id)
+
+  await supabase
+    .from("payments")
+    .update({
+      status: "succeeded",
+      provider_payment_intent_id: razorpay_order_id,
+    })
+    .eq("id", paymentRow.id)
+
+  const { data: existingTx } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("payment_id", paymentRow.id)
+    .eq("transaction_type", "payment_capture")
+    .eq("provider_event_id", razorpay_payment_id)
+    .maybeSingle()
+
+  if (!existingTx) {
+    await supabase.from("transactions").insert({
+      id: uuidv4(),
+      payment_id: paymentRow.id,
+      transaction_type: "payment_capture",
+      status: "succeeded",
+      provider_event_id: razorpay_payment_id,
+      amount: orderRow.total_amount,
+      currency,
+      raw: rzPayment,
+    })
+  }
+
+  if (orderRow.cart_id) {
+    await supabase.from("cart_items").delete().eq("cart_id", orderRow.cart_id)
+  }
+
+  if (!sendEmails) {
+    return { order_id, payment_status: "paid", order_status: PAID_ORDER_STATUS }
+  }
+
+  const { orderItems, shippingAddress, billingAddress } =
+    await loadOrderContext(order_id)
+
+  let userEmail = null
+  try {
+    const { data: userRow } = await supabase.auth.admin.getUserById(user_id)
+    userEmail = userRow?.user?.email || null
+  } catch (emailLookupErr) {
+    console.error("finalize_user_email_lookup:", emailLookupErr)
+  }
+
+  await sendCustomerOrderPlacedEmail({
+    to: userEmail,
+    orderId: order_id,
+    totalAmount: orderRow.total_amount,
+    currency,
+    customerName: shippingAddress?.recipient_name,
+  })
+
+  void sendOwnerNewOrderEmail({
+    orderId: order_id,
+    customerName: shippingAddress?.recipient_name,
+    customerEmail: userEmail,
+    userId: user_id,
+    currency,
+    subtotal: orderRow.subtotal,
+    shippingAmount: orderRow.shipping_amount,
+    taxAmount: orderRow.tax_amount,
+    totalAmount: orderRow.total_amount,
+    orderStatus: PAID_ORDER_STATUS,
+    paymentStatus: "paid",
+    orderLines: orderItems.map((it) => ({
+      product_name: it.product_name,
+      unit_price: it.unit_price,
+      quantity: it.quantity,
+      size: it.size,
+      color: it.color,
+    })),
+    shippingAddress,
+    billingAddress,
+    billingSameAsShipping:
+      JSON.stringify(shippingAddress) === JSON.stringify(billingAddress),
+  })
+
+  return { order_id, payment_status: "paid", order_status: PAID_ORDER_STATUS }
+}
+
+async function getOrderForPayment(userId, orderId) {
+  const { data: orderRow, error: orderErr } = await supabase
+    .from("orders")
+    .select(
+      "id, user_id, cart_id, payment_status, order_status, total_amount, currency, subtotal, shipping_amount, tax_amount"
+    )
+    .eq("id", orderId)
+    .maybeSingle()
+
+  if (orderErr) throw orderErr
+  if (!orderRow || orderRow.user_id !== userId) {
+    return { error: { status: 404, message: "Order not found" } }
+  }
+  return { orderRow }
+}
+
+async function getRazorpayPaymentRow(orderId) {
+  const { data: paymentRow, error: payErr } = await supabase
+    .from("payments")
+    .select("id, provider_payment_intent_id, status")
+    .eq("order_id", orderId)
+    .eq("provider", "razorpay")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (payErr) throw payErr
+  return paymentRow
+}
+
+async function verifyRazorpayPayment(req, res) {
+  try {
+    const user_id = req.user.user_id
+    const {
+      order_id,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body || {}
+
+    if (
+      !order_id ||
+      !razorpay_order_id ||
+      !razorpay_payment_id ||
+      !razorpay_signature
+    ) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Missing payment verification fields",
+      })
+    }
+
+    if (!verifyPaymentSignature({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    })) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Invalid payment signature",
+      })
+    }
+
+    const { orderRow, error: orderLookupErr } = await getOrderForPayment(
+      user_id,
+      order_id
+    )
+    if (orderLookupErr) {
+      return res.status(orderLookupErr.status).json({
+        statusCode: orderLookupErr.status,
+        message: orderLookupErr.message,
+      })
+    }
+
+    if (orderRow.payment_status === "paid") {
+      return res.json({
+        statusCode: 200,
+        order_id,
+        payment_status: "paid",
+        order_status: orderRow.order_status || PAID_ORDER_STATUS,
+        already_paid: true,
+      })
+    }
+
+    const paymentRow = await getRazorpayPaymentRow(order_id)
+    if (
+      !paymentRow ||
+      paymentRow.provider_payment_intent_id !== razorpay_order_id
+    ) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Payment does not match this order",
+      })
+    }
+
+    let rzPayment
+    try {
+      rzPayment = await fetchRazorpayPayment(razorpay_payment_id)
+    } catch (fetchErr) {
+      console.error("razorpay_fetch_payment:", fetchErr)
+      return res.status(502).json({
+        statusCode: 502,
+        message: "Could not verify payment with Razorpay",
+      })
+    }
+
+    if (
+      rzPayment.order_id !== razorpay_order_id ||
+      !["captured", "authorized"].includes(rzPayment.status)
+    ) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Payment was not successful",
+      })
+    }
+
+    const result = await finalizePaidOrder({
+      orderRow,
+      paymentRow,
+      razorpay_order_id,
+      razorpay_payment_id,
+      rzPayment,
+    })
+
+    return res.json({ statusCode: 200, ...result })
+  } catch (e) {
+    console.error("verify_razorpay_payment:", e)
+    const message =
+      e && typeof e === "object" && "message" in e && e.message
+        ? String(e.message)
+        : "Payment verification failed"
+    return res.status(500).json({ statusCode: 500, message })
+  }
+}
+
+/** Reconcile unpaid order against Razorpay (paid in app but DB not updated) */
+async function reconcileRazorpayPayment(req, res) {
+  try {
+    const user_id = req.user.user_id
+    const order_id = req.body?.order_id || req.params?.orderId
+
+    if (!order_id) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "order_id required",
+      })
+    }
+
+    const { orderRow, error: orderLookupErr } = await getOrderForPayment(
+      user_id,
+      order_id
+    )
+    if (orderLookupErr) {
+      return res.status(orderLookupErr.status).json({
+        statusCode: orderLookupErr.status,
+        message: orderLookupErr.message,
+      })
+    }
+
+    if (orderRow.payment_status === "paid") {
+      return res.json({
+        statusCode: 200,
+        order_id,
+        payment_status: "paid",
+        order_status: orderRow.order_status || PAID_ORDER_STATUS,
+        already_paid: true,
+      })
+    }
+
+    const paymentRow = await getRazorpayPaymentRow(order_id)
+    if (!paymentRow?.provider_payment_intent_id) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "No Razorpay payment session found for this order",
+      })
+    }
+
+    const rzOrderId = paymentRow.provider_payment_intent_id
+    let paymentsList
+    try {
+      paymentsList = await fetchRazorpayOrderPayments(rzOrderId)
+    } catch (fetchErr) {
+      console.error("razorpay_fetch_order_payments:", fetchErr)
+      return res.status(502).json({
+        statusCode: 502,
+        message: "Could not fetch payments from Razorpay",
+      })
+    }
+
+    const captured = (paymentsList || []).find((p) =>
+      ["captured", "authorized"].includes(p.status)
+    )
+
+    if (!captured) {
+      return res.status(400).json({
+        statusCode: 400,
+        message:
+          "No successful payment found on Razorpay for this order. Complete payment or try Pay again.",
+      })
+    }
+
+    const result = await finalizePaidOrder({
+      orderRow,
+      paymentRow,
+      razorpay_order_id: rzOrderId,
+      razorpay_payment_id: captured.id,
+      rzPayment: captured,
+    })
+
+    return res.json({
+      statusCode: 200,
+      ...result,
+      reconciled: true,
+    })
+  } catch (e) {
+    console.error("reconcile_razorpay_payment:", e)
+    const message =
+      e && typeof e === "object" && "message" in e && e.message
+        ? String(e.message)
+        : "Could not reconcile payment"
+    return res.status(500).json({ statusCode: 500, message })
+  }
+}
+
+/** New Razorpay session for an unpaid order */
+async function resumeOrderPayment(req, res) {
+  try {
+    const user_id = req.user.user_id
+    const { orderId } = req.params
+
+    const { orderRow, error: orderLookupErr } = await getOrderForPayment(
+      user_id,
+      orderId
+    )
+    if (orderLookupErr) {
+      return res.status(orderLookupErr.status).json({
+        statusCode: orderLookupErr.status,
+        message: orderLookupErr.message,
+      })
+    }
+
+    if (orderRow.payment_status === "paid") {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Order is already paid",
+      })
+    }
+
+    if (!isRazorpayConfigured()) {
+      return res.status(503).json({
+        statusCode: 503,
+        message: "Payment service is not configured",
+      })
+    }
+
+    const totalAmount = orderRow.total_amount
+    const currency = orderRow.currency || CHECKOUT_CURRENCY
+
+    let razorpayOrder
+    try {
+      const created = await createRazorpayOrder({
+        amountMajor: totalAmount,
+        currency,
+        receipt: orderId,
+        notes: { order_id: orderId, user_id, retry: "true" },
+      })
+      razorpayOrder = created.order
+    } catch (rzErr) {
+      const rzMessage = formatRazorpayError(rzErr)
+      console.error("razorpay_resume_order:", rzErr)
+      return res.status(502).json({
+        statusCode: 502,
+        message: `Could not start payment: ${rzMessage}`,
+      })
+    }
+
+    const paymentRow = await getRazorpayPaymentRow(orderId)
+    if (paymentRow) {
+      await supabase
+        .from("payments")
+        .update({
+          provider_payment_intent_id: razorpayOrder.id,
+          status: "requires_payment_method",
+        })
+        .eq("id", paymentRow.id)
+    }
+
+    let userEmail = null
+    let userName = null
+    const { shippingAddress } = await loadOrderContext(orderId)
+    try {
+      const { data: userRow } = await supabase.auth.admin.getUserById(user_id)
+      userEmail = userRow?.user?.email || null
+      userName =
+        userRow?.user?.user_metadata?.full_name ||
+        userRow?.user?.user_metadata?.name ||
+        null
+    } catch (_) {}
+
+    return res.json({
+      statusCode: 200,
+      order_id: orderId,
+      currency,
+      amount: totalAmount,
+      razorpay: {
+        key_id: getRazorpayKeyId(),
+        order_id: razorpayOrder.id,
+        amount: toRazorpayAmount(totalAmount, currency),
+        currency,
+        name: "JACRO",
+        description: `Order ${orderId.slice(0, 8)}`,
+        prefill: {
+          name: shippingAddress?.recipient_name || userName || undefined,
+          email: userEmail || undefined,
+          contact: shippingAddress?.phone || undefined,
+        },
+      },
+    })
+  } catch (e) {
+    console.error("resume_order_payment:", e)
+    return res.status(500).json({ statusCode: 500, message: String(e) })
+  }
+}
+
+app.post(
+  "/payments/razorpay/verify",
+  createPaymentLimiter,
+  authenticateJWT,
+  verifyRazorpayPayment
+)
+
+app.post(
+  "/payments/razorpay/reconcile",
+  createPaymentLimiter,
+  authenticateJWT,
+  reconcileRazorpayPayment
+)
+
+app.post(
+  "/orders/:orderId/resume-payment",
+  createPaymentLimiter,
+  authenticateJWT,
+  resumeOrderPayment
+)
+
+function requireAdminKey(req, res, next) {
+  const required = process.env.ADMIN_API_KEY?.trim()
+  if (!required) return next()
+  const key = req.headers["x-admin-key"]
+  if (key !== required) {
+    return res.status(401).json({ statusCode: 401, message: "Unauthorized" })
+  }
+  next()
+}
 
 function normalizeGateway(providerRaw) {
   const provider = String(providerRaw || "manual").toLowerCase()
@@ -1177,7 +1777,7 @@ async function buildOrdersPayload(orderRows) {
   ] = await Promise.all([
     supabase
       .from("payments")
-      .select("id, order_id, provider, status, method, amount, currency, created_at")
+      .select("id, order_id, provider, status, amount, currency, created_at")
       .in("order_id", orderIds),
     supabase
       .from("order_addresses")
@@ -1245,7 +1845,7 @@ async function buildOrdersPayload(orderRows) {
       order_status: o.order_status,
       payment_status: o.payment_status,
       payment_provider: p.provider || null,
-      payment_method: p.method || null,
+      payment_method: p.provider || null,
       currency: o.currency,
       subtotal: o.subtotal,
       shipping_amount: o.shipping_amount,
@@ -1287,6 +1887,31 @@ app.get("/orders", authenticateJWT, async (req, res) => {
     return res.json({ statusCode: 200, data })
   } catch (e) {
     console.error("get_orders:", e)
+    return res.status(500).json({ statusCode: 500, message: String(e) })
+  }
+})
+
+/** Must be registered before /orders/:orderId or "demo" is treated as an order id. */
+app.get("/orders/demo", async (_req, res) => {
+  try {
+    const { data: orders, error: ordersErr } = await supabase
+      .from("orders")
+      .select(
+        "id, order_status, payment_status, currency, subtotal, shipping_amount, tax_amount, total_amount, created_at"
+      )
+      .order("created_at", { ascending: false })
+      .limit(50)
+
+    if (ordersErr) throw ordersErr
+    if (!orders?.length) {
+      return res.json({ statusCode: 200, data: [] })
+    }
+
+    const data = await buildOrdersPayload(orders)
+
+    return res.json({ statusCode: 200, data })
+  } catch (e) {
+    console.error("get_demo_orders:", e)
     return res.status(500).json({ statusCode: 500, message: String(e) })
   }
 })
@@ -1412,9 +2037,8 @@ app.post("/orders/demo", async (req, res) => {
       id: paymentId,
       order_id: orderId,
       provider: gateway.provider,
-      provider_payment_intent: `${gateway.provider}_${orderId}`,
+      provider_payment_intent_id: `${gateway.provider}_${orderId}`,
       status: "succeeded",
-      method: gateway.method,
       amount: totalAmount,
       currency,
     })
@@ -1449,26 +2073,21 @@ app.post("/orders/demo", async (req, res) => {
   }
 })
 
-app.get("/orders/demo", async (_req, res) => {
+app.get("/admin/orders", requireAdminKey, async (_req, res) => {
   try {
     const { data: orders, error: ordersErr } = await supabase
       .from("orders")
       .select(
-        "id, order_status, payment_status, currency, subtotal, shipping_amount, tax_amount, total_amount, created_at"
+        "id, user_id, order_status, payment_status, currency, subtotal, shipping_amount, tax_amount, total_amount, created_at"
       )
       .order("created_at", { ascending: false })
-      .limit(50)
+      .limit(100)
 
     if (ordersErr) throw ordersErr
-    if (!orders?.length) {
-      return res.json({ statusCode: 200, data: [] })
-    }
-
-    const data = await buildOrdersPayload(orders)
-
+    const data = await buildOrdersPayload(orders || [])
     return res.json({ statusCode: 200, data })
   } catch (e) {
-    console.error("get_demo_orders:", e)
+    console.error("admin_orders:", e)
     return res.status(500).json({ statusCode: 500, message: String(e) })
   }
 })

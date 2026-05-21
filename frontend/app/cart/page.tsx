@@ -8,6 +8,12 @@ import Link from "next/link"
 import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
 import { useCart, type CartItem } from "@/lib/cart"
+import {
+  calcShipping,
+  formatPrice,
+  FREE_SHIPPING_MIN,
+  SHIPPING_CHARGES_ENABLED,
+} from "@/lib/currency"
 
 export default function CartPage() {
   const [mounted, setMounted] = useState(false)
@@ -22,7 +28,7 @@ export default function CartPage() {
   }, [])
 
   const subtotal = mounted ? getTotal() : 0
-  const shipping = subtotal > 500 ? 0 : 25
+  const shipping = mounted ? calcShipping(subtotal) : 0
   const total = subtotal + shipping
   const itemCount = mounted ? getItemCount() : 0
 
@@ -88,21 +94,25 @@ export default function CartPage() {
                   <div className="space-y-4 text-sm">
                     <div className="flex justify-between text-[#6B6B6B]">
                       <span>Subtotal</span>
-                      <span>${subtotal.toLocaleString()}</span>
+                      <span>{formatPrice(subtotal)}</span>
                     </div>
-                    <div className="flex justify-between text-[#6B6B6B]">
-                      <span>Shipping</span>
-                      <span>{shipping === 0 ? 'Free' : `$${shipping}`}</span>
-                    </div>
-                    {shipping > 0 && (
-                      <p className="text-xs text-[#C6A96B]">
-                        Free shipping on orders over $500
-                      </p>
+                    {SHIPPING_CHARGES_ENABLED && (
+                      <>
+                        <div className="flex justify-between text-[#6B6B6B]">
+                          <span>Shipping</span>
+                          <span>{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
+                        </div>
+                        {shipping > 0 && (
+                          <p className="text-xs text-[#C6A96B]">
+                            Free shipping on orders over {formatPrice(FREE_SHIPPING_MIN)}
+                          </p>
+                        )}
+                      </>
                     )}
                     <div className="border-t border-[#E5E5E5] pt-4">
                       <div className="flex justify-between text-[#111111] font-medium text-base">
                         <span>Total</span>
-                        <span>${total.toLocaleString()}</span>
+                        <span>{formatPrice(total)}</span>
                       </div>
                     </div>
                   </div>
@@ -122,7 +132,7 @@ export default function CartPage() {
                   </Link>
 
                   <p className="text-xs text-[#6B6B6B] text-center mt-4">
-                    Secure checkout (payment integration later)
+                    Secure checkout powered by Razorpay
                   </p>
                 </motion.div>
               </div>
@@ -214,7 +224,7 @@ function CartItemCard({
 
           {/* Price */}
           <p className="text-[#111111] font-medium">
-            ${(item.price * item.quantity).toLocaleString()}
+            {formatPrice(item.price * item.quantity)}
           </p>
         </div>
       </div>

@@ -8,6 +8,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useCart } from "@/lib/cart"
 import { useWishlist } from "@/lib/wishlist"
+import { formatPrice } from "@/lib/currency"
 import { toast } from "@/hooks/use-toast"
 
 interface ProductDetailProps {
@@ -218,7 +219,7 @@ export function ProductDetail({ product }: ProductDetailProps) {
 
             {/* Price */}
             <p className="text-xl md:text-2xl text-[#111111]">
-              ${product.price.toLocaleString()}
+              {formatPrice(product.price)}
             </p>
 
             {/* Description */}

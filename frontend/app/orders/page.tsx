@@ -10,6 +10,9 @@ import { Navbar } from "@/components/navbar"
 import { Footer } from "@/components/footer"
 import { useAuth } from "@/lib/auth"
 import { useCart } from "@/lib/cart"
+import { formatPrice } from "@/lib/currency"
+import { openRazorpayCheckout } from "@/lib/razorpay"
+import { toast } from "@/hooks/use-toast"
 
 const BASE_URL = "http://localhost:8001"
 
@@ -31,16 +34,29 @@ type Order = {
 }
 
 const statusColors: Record<string, string> = {
+  confirmed: "bg-green-100 text-green-700",
   delivered: "bg-green-100 text-green-700",
   shipped: "bg-blue-100 text-blue-700",
   processing: "bg-yellow-100 text-yellow-700",
+  pending_payment: "bg-amber-100 text-amber-800",
   placed: "bg-purple-100 text-purple-700",
   cancelled: "bg-red-100 text-red-700",
 }
 
-function formatOrderStatusLabel(statusRaw?: string) {
-  const key = (statusRaw || "processing").toLowerCase().replace(/\s+/g, "_")
+function formatOrderStatusLabel(statusRaw?: string, paymentStatus?: string) {
+  const key = (statusRaw || "").toLowerCase().replace(/\s+/g, "_")
+  const pay = (paymentStatus || "").toLowerCase()
+  if (
+    pay === "paid" &&
+    (key === "confirmed" || key === "placed" || key === "processing" || !key)
+  ) {
+    return "Confirmed"
+  }
+  if (key === "pending_payment" || (pay === "unpaid" && !key)) {
+    return "Awaiting payment"
+  }
   const pretty: Record<string, string> = {
+    confirmed: "Confirmed",
     processing: "Processing",
     placed: "Placed",
     shipped: "Shipped",
@@ -48,12 +64,20 @@ function formatOrderStatusLabel(statusRaw?: string) {
     cancelled: "Cancelled",
     pending: "Pending",
     completed: "Completed",
+    pending_payment: "Awaiting payment",
   }
   if (pretty[key]) return pretty[key]
-  if (!statusRaw) return "Processing"
+  if (!statusRaw) return pay === "paid" ? "Confirmed" : "Awaiting payment"
   return statusRaw
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function formatPaymentLabel(statusRaw?: string) {
+  const s = (statusRaw || "").toLowerCase()
+  if (s === "paid") return "Paid"
+  if (s === "unpaid") return "Unpaid"
+  return statusRaw || "-"
 }
 
 export default function OrdersPage() {
@@ -63,6 +87,117 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
+  const [payBusyId, setPayBusyId] = useState<string | null>(null)
+
+  const reloadOrders = async () => {
+    const token = localStorage.getItem("token")
+    if (!token) return
+    const res = await fetch(`${BASE_URL}/orders`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const data = await res.json()
+    if (res.ok && data?.statusCode === 200 && Array.isArray(data.data)) {
+      setOrders(data.data)
+    }
+  }
+
+  const reconcileOrder = async (orderId: string) => {
+    const token = localStorage.getItem("token")
+    if (!token) return
+    setPayBusyId(orderId)
+    try {
+      const res = await fetch(`${BASE_URL}/payments/razorpay/reconcile`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ order_id: orderId }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.statusCode !== 200) {
+        throw new Error(
+          typeof data?.message === "string" ? data.message : "Could not verify payment"
+        )
+      }
+      toast({ title: "Order updated", description: "Payment confirmed." })
+      await reloadOrders()
+    } catch (e: unknown) {
+      toast({
+        title: "Could not verify",
+        description: e instanceof Error ? e.message : "Try again",
+        variant: "destructive",
+      })
+    } finally {
+      setPayBusyId(null)
+    }
+  }
+
+  const payAgain = async (orderId: string) => {
+    const token = localStorage.getItem("token")
+    if (!token) return
+    setPayBusyId(orderId)
+    try {
+      const res = await fetch(`${BASE_URL}/orders/${orderId}/resume-payment`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (!res.ok || !data.razorpay) {
+        throw new Error(
+          typeof data?.message === "string" ? data.message : "Could not start payment"
+        )
+      }
+      const { razorpay } = data
+      await openRazorpayCheckout({
+        key: razorpay.key_id,
+        amount: razorpay.amount,
+        currency: razorpay.currency,
+        name: razorpay.name || "JACRO",
+        description: razorpay.description,
+        order_id: razorpay.order_id,
+        prefill: razorpay.prefill,
+        theme: { color: "#111111" },
+        handler: async (response) => {
+          const verifyRes = await fetch(`${BASE_URL}/payments/razorpay/verify`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              order_id: orderId,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          })
+          const verifyData = await verifyRes.json()
+          if (!verifyRes.ok || verifyData.statusCode !== 200) {
+            throw new Error(
+              typeof verifyData?.message === "string"
+                ? verifyData.message
+                : "Verification failed"
+            )
+          }
+          toast({ title: "Payment successful", description: "Your order is confirmed." })
+          await reloadOrders()
+          setSelectedOrder(null)
+        },
+        modal: {
+          ondismiss: () => setPayBusyId(null),
+        },
+      })
+    } catch (e: unknown) {
+      toast({
+        title: "Payment failed",
+        description: e instanceof Error ? e.message : "Try again",
+        variant: "destructive",
+      })
+    } finally {
+      setPayBusyId(null)
+    }
+  }
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -99,10 +234,16 @@ export default function OrdersPage() {
 
   const renderedOrders = useMemo(() => orders, [orders])
 
-  const getStatusChip = (statusRaw?: string) => {
-    const status = (statusRaw || "processing").toLowerCase().replace(/\s+/g, "_")
+  const getStatusChip = (order: Order) => {
+    const status = (
+      order.payment_status === "paid" && order.order_status === "processing"
+        ? "confirmed"
+        : order.order_status || "pending_payment"
+    )
+      .toLowerCase()
+      .replace(/\s+/g, "_")
     return {
-      label: formatOrderStatusLabel(statusRaw),
+      label: formatOrderStatusLabel(order.order_status, order.payment_status),
       className: statusColors[status] || "bg-gray-100 text-gray-700",
     }
   }
@@ -172,7 +313,8 @@ export default function OrdersPage() {
             /* Orders List */
             <div className="space-y-4">
               {renderedOrders.map((order, index) => {
-                const statusChip = getStatusChip(order.order_status)
+                const statusChip = getStatusChip(order)
+                const isUnpaid = order.payment_status !== "paid"
                 const orderDate = order.created_at
                   ? new Date(order.created_at).toLocaleDateString(undefined, {
                       year: "numeric",
@@ -225,8 +367,28 @@ export default function OrdersPage() {
                         <span>
                           {itemCount} {itemCount === 1 ? "item" : "items"}
                         </span>
-                        <span>Payment: {order.payment_status || "-"}</span>
+                        <span>Payment: {formatPaymentLabel(order.payment_status)}</span>
                       </div>
+                      {isUnpaid && (
+                        <motion.div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={payBusyId === order.id}
+                            onClick={() => reconcileOrder(order.id)}
+                            className="text-xs px-3 py-1.5 border border-[#E5E5E5] rounded-sm hover:border-[#111111] disabled:opacity-60"
+                          >
+                            {payBusyId === order.id ? "…" : "Verify payment"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={payBusyId === order.id}
+                            onClick={() => payAgain(order.id)}
+                            className="text-xs px-3 py-1.5 bg-[#111111] text-white rounded-sm disabled:opacity-60"
+                          >
+                            Pay again
+                          </button>
+                        </motion.div>
+                      )}
                       </div>
                     </div>
                     
@@ -234,8 +396,7 @@ export default function OrdersPage() {
                       <div className="text-right">
                         <p className="text-sm text-[#6B6B6B]">Total</p>
                         <p className="font-medium text-[#111111]">
-                          {(order.currency || "USD")}{" "}
-                          {Number(order.total_amount || 0).toLocaleString()}
+                          {formatPrice(Number(order.total_amount || 0))}
                         </p>
                       </div>
                       <motion.button
@@ -274,11 +435,17 @@ export default function OrdersPage() {
             <p className="text-sm text-[#6B6B6B] mb-1">
               Status:{" "}
               <span className="text-[#111111]">
-                {formatOrderStatusLabel(selectedOrder.order_status)}
+                {formatOrderStatusLabel(
+                  selectedOrder.order_status,
+                  selectedOrder.payment_status
+                )}
               </span>
             </p>
             <p className="text-sm text-[#6B6B6B] mb-4">
-              Payment: <span className="text-[#111111]">{selectedOrder.payment_status || "-"}</span>
+              Payment:{" "}
+              <span className="text-[#111111]">
+                {formatPaymentLabel(selectedOrder.payment_status)}
+              </span>
             </p>
 
             <div className="space-y-3">
@@ -301,8 +468,8 @@ export default function OrdersPage() {
                   <div>
                   <p className="text-sm text-[#111111] font-medium">{item.product_name || "Product"}</p>
                   <p className="text-xs text-[#6B6B6B]">
-                    Qty: {item.quantity || 0} | Price: {selectedOrder.currency || "USD"}{" "}
-                    {Number(item.unit_price || 0).toLocaleString()}
+                    Qty: {item.quantity || 0} | Price:{" "}
+                    {formatPrice(Number(item.unit_price || 0))}
                   </p>
                   </div>
                 </div>

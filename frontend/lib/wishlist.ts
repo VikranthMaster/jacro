@@ -1,7 +1,7 @@
 "use client"
 import { create } from "zustand"
 
-const BASE_URL = "http://localhost:8001"
+const BASE_URL = "/api"
 
 function jsonAuthHeaders(): HeadersInit {
   const h: Record<string, string> = { "Content-Type": "application/json" }
