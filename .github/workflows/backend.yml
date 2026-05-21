@@ -1,0 +1,31 @@
+name: Frontend CI/CD
+on:
+    push:
+        branches:
+            - test
+        paths:
+            - 'backend/**'
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+            
+            - name: Setup SSH
+              uses: appleboy/ssh-action@v1.0.3
+              with:
+                host: ${{ secrets.HOST_JACRO }}
+                username: ubuntu
+                key: ${{ secrets.JACRO_PEM_KEY }}
+                script: |
+                    cd /home/ubuntu/jacro
+                    git pull
+                    cd backend
+                    npm install
+                    pm2 restart backend
+
+        
+
