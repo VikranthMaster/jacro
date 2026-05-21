@@ -365,6 +365,10 @@ app.get("/", (_req, res) => {
   res.json({ message: "Alive!" })
 })
 
+app.get("/health", (req, res)=>{
+  res.json({message: "Healthy!"})
+})
+
 app.post("/add_product", upload.array("files"), async (req, res) => {
   try {
     const { name, desc, price, category } = req.body
