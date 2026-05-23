@@ -2,13 +2,21 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "3001:3000"
+    environment:
+      - NODE_ENV=production
     restart: always
-
+    depends_on:
+      - backend
+  
   backend:
     build: ./backend
     ports:
-      - "8001:8001"
+      - "8002:8001"
     env_file:
       - ./backend/.env
+    environment:
+      - NODE_ENV=production
     restart: always
+    volumes:
+      - /mnt/nas/uploads:/backend/uploads
