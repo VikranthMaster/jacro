@@ -3,8 +3,8 @@ import cors from "cors"
 import express from "express"
 import multer from "multer"
 import nodemailer from "nodemailer"
-import { createClient } from "@supabase/supabase-js"
 import { v4 as uuidv4 } from "uuid"
+import { supabaseAdmin as supabase, throwIfDbError } from "./utils/supabaseAdmin.js"
 import { authenticateJWT, signAppJwt } from "./middleware/auth.js"
 import {
   globalLimiter,
@@ -37,14 +37,7 @@ const SHIPPING_CHARGES_ENABLED = false
 const FREE_SHIPPING_MIN = Number(process.env.FREE_SHIPPING_MIN) || 5000
 const SHIPPING_FEE = Number(process.env.SHIPPING_FEE) || 199
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-  // process.env.SUPABASE_URL || "https://dnyuomscigxcyibonylq.supabase.co"
-const SV_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SV_KEY;
-  // "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRueXVvbXNjaWd4Y3lpYm9ueWxxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDEwNzEzMiwiZXhwIjoyMDg5NjgzMTMyfQ.6oAx-3B8BSn1DueonjX49bd8ctdpIp5uvejrbYbGJ34"
-
-const supabase = createClient(SUPABASE_URL, SV_KEY)
+const SUPABASE_URL = process.env.SUPABASE_URL
 
 const app = express()
 
@@ -1210,25 +1203,31 @@ async function placeCheckout(req, res) {
 
     const paymentId = uuidv4()
 
-    await supabase.from("payments").insert({
-      id: paymentId,
-      order_id: orderId,
-      provider: "razorpay",
-      provider_payment_intent_id: razorpayOrder.id,
-      status: "requires_payment_method",
-      amount: totalAmount,
-      currency: CHECKOUT_CURRENCY,
-    })
+    throwIfDbError(
+      await supabase.from("payments").insert({
+        id: paymentId,
+        order_id: orderId,
+        provider: "razorpay",
+        provider_payment_intent_id: razorpayOrder.id,
+        status: "requires_payment_method",
+        amount: totalAmount,
+        currency: CHECKOUT_CURRENCY,
+      }),
+      "payments_insert"
+    )
 
-    await supabase.from("transactions").insert({
-      id: uuidv4(),
-      payment_id: paymentId,
-      transaction_type: "payment_attempt",
-      status: "created",
-      amount: totalAmount,
-      currency: CHECKOUT_CURRENCY,
-      raw: { razorpay_order_id: razorpayOrder.id },
-    })
+    throwIfDbError(
+      await supabase.from("transactions").insert({
+        id: uuidv4(),
+        payment_id: paymentId,
+        transaction_type: "payment_attempt",
+        status: "created",
+        amount: totalAmount,
+        currency: CHECKOUT_CURRENCY,
+        raw: { razorpay_order_id: razorpayOrder.id },
+      }),
+      "transactions_insert"
+    )
 
     return res.json({
       statusCode: 200,
@@ -1423,7 +1422,7 @@ async function getOrderForPayment(userId, orderId) {
 async function getRazorpayPaymentRow(orderId) {
   const { data: paymentRow, error: payErr } = await supabase
     .from("payments")
-    .select("id, provider_payment_intent_id, status")
+    .select("id, order_id, provider_payment_intent_id, status")
     .eq("order_id", orderId)
     .eq("provider", "razorpay")
     .order("created_at", { ascending: false })
@@ -1431,6 +1430,75 @@ async function getRazorpayPaymentRow(orderId) {
     .maybeSingle()
   if (payErr) throw payErr
   return paymentRow
+}
+
+/**
+ * Align payments row with the Razorpay order the customer actually paid.
+ * Handles RLS-blocked inserts (no row), and Pay-again sessions (intent id changed).
+ */
+async function resolveRazorpayPaymentForOrder(
+  orderId,
+  razorpayOrderId,
+  orderRow
+) {
+  const { data: byIntent, error: intentErr } = await supabase
+    .from("payments")
+    .select("id, order_id, provider_payment_intent_id, status")
+    .eq("provider", "razorpay")
+    .eq("provider_payment_intent_id", razorpayOrderId)
+    .maybeSingle()
+  if (intentErr) throw intentErr
+
+  if (byIntent) {
+    if (byIntent.order_id !== orderId) {
+      return { error: "Payment does not match this order" }
+    }
+    return { paymentRow: byIntent }
+  }
+
+  const paymentRow = await getRazorpayPaymentRow(orderId)
+  if (paymentRow) {
+    if (paymentRow.provider_payment_intent_id === razorpayOrderId) {
+      return { paymentRow }
+    }
+    const { error: updErr } = await supabase
+      .from("payments")
+      .update({
+        provider_payment_intent_id: razorpayOrderId,
+        status: "requires_payment_method",
+      })
+      .eq("id", paymentRow.id)
+    if (updErr) throw updErr
+    return {
+      paymentRow: {
+        ...paymentRow,
+        provider_payment_intent_id: razorpayOrderId,
+      },
+    }
+  }
+
+  const paymentId = uuidv4()
+  throwIfDbError(
+    await supabase.from("payments").insert({
+      id: paymentId,
+      order_id: orderId,
+      provider: "razorpay",
+      provider_payment_intent_id: razorpayOrderId,
+      status: "requires_payment_method",
+      amount: orderRow.total_amount,
+      currency: orderRow.currency || CHECKOUT_CURRENCY,
+    }),
+    "payments_insert_heal"
+  )
+
+  return {
+    paymentRow: {
+      id: paymentId,
+      order_id: orderId,
+      provider_payment_intent_id: razorpayOrderId,
+      status: "requires_payment_method",
+    },
+  }
 }
 
 async function verifyRazorpayPayment(req, res) {
@@ -1487,14 +1555,16 @@ async function verifyRazorpayPayment(req, res) {
       })
     }
 
-    const paymentRow = await getRazorpayPaymentRow(order_id)
-    if (
-      !paymentRow ||
-      paymentRow.provider_payment_intent_id !== razorpay_order_id
-    ) {
+    const { paymentRow, error: payResolveErr } =
+      await resolveRazorpayPaymentForOrder(
+        order_id,
+        razorpay_order_id,
+        orderRow
+      )
+    if (payResolveErr) {
       return res.status(400).json({
         statusCode: 400,
-        message: "Payment does not match this order",
+        message: payResolveErr,
       })
     }
 
@@ -1681,13 +1751,29 @@ async function resumeOrderPayment(req, res) {
 
     const paymentRow = await getRazorpayPaymentRow(orderId)
     if (paymentRow) {
-      await supabase
-        .from("payments")
-        .update({
+      throwIfDbError(
+        await supabase
+          .from("payments")
+          .update({
+            provider_payment_intent_id: razorpayOrder.id,
+            status: "requires_payment_method",
+          })
+          .eq("id", paymentRow.id),
+        "payments_resume_update"
+      )
+    } else {
+      throwIfDbError(
+        await supabase.from("payments").insert({
+          id: uuidv4(),
+          order_id: orderId,
+          provider: "razorpay",
           provider_payment_intent_id: razorpayOrder.id,
           status: "requires_payment_method",
-        })
-        .eq("id", paymentRow.id)
+          amount: totalAmount,
+          currency,
+        }),
+        "payments_resume_insert"
+      )
     }
 
     let userEmail = null
