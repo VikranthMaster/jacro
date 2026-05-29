@@ -39,7 +39,7 @@ export default function ContactPage() {
             <div>
               <p className="text-sm font-medium mb-1">Email</p>
               <a
-                href="mailto:hello@jacro.com"
+                href="mailto:thejacro@gmail.com"
                 className="text-[#C6A96B] hover:underline text-sm"
               >
                 hello@jacro.com
