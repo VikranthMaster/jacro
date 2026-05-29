@@ -42,7 +42,7 @@ export default function ContactPage() {
                 href="mailto:thejacro@gmail.com"
                 className="text-[#C6A96B] hover:underline text-sm"
               >
-                hello@jacro.com
+                thejacro@gmail.com
               </a>
             </div>
           </div>
