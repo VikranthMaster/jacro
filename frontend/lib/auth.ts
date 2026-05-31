@@ -18,10 +18,15 @@ export type LoginResult =
   | { ok: true }
   | { ok: false; message: string; emailNotConfirmed?: boolean }
 
+export type VerifyOtpResult =
+  | { ok: true }
+  | { ok: false; message: string }
+
 interface AuthStore {
   user: User | null
   isAuthenticated: boolean
   login: (email: string, password: string) => Promise<LoginResult>
+  verifyOtp: (email: string, otp: string) => Promise<VerifyOtpResult>
   signup: (name: string, email: string, password: string) => Promise<SignupResult>
   logout: () => void
   updateProfile: (name: string, email: string) => void
@@ -75,6 +80,43 @@ export const useAuth = create<AuthStore>()(
               ? hint
               : data.message || "Invalid email or password",
             emailNotConfirmed: emailNotConfirmed || undefined,
+          }
+        } catch (err) {
+          console.error(err)
+          return { ok: false, message: "An error occurred. Please try again." }
+        }
+      },
+
+      verifyOtp: async (email: string, otp: string) => {
+        try {
+          const res = await fetch(`${BASE_URL}/verify-otp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email.trim(), otp }),
+          })
+          const data = await res.json().catch(() => ({}))
+
+          if (res.ok && data.statusCode === 200) {
+            if (data.user?.id && data.token) {
+              const fallbackName =
+                (data.user.email || "").split("@")[0] || "Account"
+              set({
+                user: {
+                  id: data.user.id,
+                  name: data.user.name || fallbackName,
+                  email: data.user.email,
+                },
+                isAuthenticated: true,
+              })
+              localStorage.setItem("user_id", data.user.id)
+              localStorage.setItem("token", data.token)
+            }
+            return { ok: true }
+          }
+
+          return {
+            ok: false,
+            message: data.message || "Invalid or expired code. Please try again.",
           }
         } catch (err) {
           console.error(err)

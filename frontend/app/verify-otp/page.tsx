@@ -6,6 +6,7 @@ import { Mail, ShieldCheck } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
+import { useAuth } from "@/lib/auth"
 import {
   InputOTP,
   InputOTPGroup,
@@ -17,6 +18,7 @@ const BASE_URL = "/api"
 function VerifyOtpForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { verifyOtp } = useAuth()
   const email = searchParams.get("email")?.trim() || ""
 
   const [otp, setOtp] = useState("")
@@ -56,19 +58,12 @@ function VerifyOtpForm() {
     setIsLoading(true)
 
     try {
-      const res = await fetch(`${BASE_URL}/verify-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
-      })
-      const data = await res.json().catch(() => ({}))
-
-      if (res.ok && data.statusCode === 200) {
+      const result = await verifyOtp(email, otp)
+      if (result.ok) {
         router.push("/")
         return
       }
-
-      setError(data.message || "Invalid or expired code. Please try again.")
+      setError(result.message)
     } catch {
       setError("An error occurred. Please try again.")
     } finally {
