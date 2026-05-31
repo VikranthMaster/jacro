@@ -3,7 +3,7 @@ import type { Product } from "@/components/product-card"
 // colors: ["Charcoal", "Camel", "Navy"],
 //   sizes: ["XS", "S", "M", "L", "XL"],
 
-const BASE_URL = "http://localhost:8001"
+const BASE_URL = "/api"
 
 // -----------------------------
 // 🧠 TYPES

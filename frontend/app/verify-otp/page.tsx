@@ -12,7 +12,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp"
 
-const BASE_URL = "http://localhost:8001"
+const BASE_URL = "/api"
 
 function VerifyOtpForm() {
   const router = useRouter()

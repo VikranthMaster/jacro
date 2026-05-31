@@ -14,7 +14,7 @@ import { formatPrice } from "@/lib/currency"
 import { openRazorpayCheckout } from "@/lib/razorpay"
 import { toast } from "@/hooks/use-toast"
 
-const BASE_URL = "http://localhost:8001"
+const BASE_URL = "/api"
 
 type OrderItem = {
   product_name?: string | null

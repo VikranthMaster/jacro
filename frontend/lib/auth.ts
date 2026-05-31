@@ -28,7 +28,7 @@ interface AuthStore {
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>
 }
 
-const BASE_URL = "http://localhost:8001";
+const BASE_URL = "/api";
 
 
 export const useAuth = create<AuthStore>()(
