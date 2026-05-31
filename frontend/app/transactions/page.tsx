@@ -15,7 +15,7 @@ import { calcShipping, formatPrice, SHIPPING_CHARGES_ENABLED } from "@/lib/curre
 import { openRazorpayCheckout } from "@/lib/razorpay"
 import { toast } from "@/hooks/use-toast"
 
-const BASE_URL = "/api"
+const BASE_URL = "http://localhost:8001"
 
 type Address = {
   recipient_name: string

@@ -1,22 +1,12 @@
 services:
-  frontend:
-    build: ./frontend
+  redis:
+    image: redis:7-alpine
+    container_name: jacro-redis
     ports:
-      - "3001:3000"
-    environment:
-      - NODE_ENV=production
-    restart: always
-    depends_on:
-      - backend
-  
-  backend:
-    build: ./backend
-    ports:
-      - "8002:8001"
-    env_file:
-      - ./backend/.env
-    environment:
-      - NODE_ENV=production
-    restart: always
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - /mnt/nas/uploads:/backend/uploads
+      - redis-data:/data 
+
+volumes:
+  redis-data:

@@ -26,6 +26,7 @@ import {
   verifyPaymentSignature,
 } from "./utils/razorpay.js"
 import dotenv from "dotenv";
+import Redis from "ioredis";
 dotenv.config();
 
 const PORT = Number(process.env.PORT) || 8001
@@ -38,7 +39,8 @@ const FREE_SHIPPING_MIN = Number(process.env.FREE_SHIPPING_MIN) || 5000
 const SHIPPING_FEE = Number(process.env.SHIPPING_FEE) || 199
 
 const SUPABASE_URL = process.env.SUPABASE_URL
-
+const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379"
+const redis = new Redis(REDIS_URL)
 const app = express()
 
 if (isRazorpayConfigured()) {
@@ -147,6 +149,80 @@ function getBrandLogoUrl() {
   return `${String(base).replace(/\/$/, "")}/icon.svg`
 }
 
+function getOtp(email) {
+  const emailNorm =
+    typeof email === "string" ? email.trim().toLowerCase() : ""
+  return `otp:${emailNorm}`
+}
+
+function getOtpUserKey(email) {
+  const emailNorm =
+    typeof email === "string" ? email.trim().toLowerCase() : ""
+  return `otp-user:${emailNorm}`
+}
+
+function getOtpCooldownKey(email) {
+  const emailNorm =
+    typeof email === "string" ? email.trim().toLowerCase() : ""
+  return `otp-cooldown:${emailNorm}`
+}
+
+async function issueOtpForEmail(email, { customerName, userId } = {}) {
+  const emailNorm =
+    typeof email === "string" ? email.trim().toLowerCase() : ""
+  if (!emailNorm) {
+    return { ok: false, message: "email required" }
+  }
+
+  const onCooldown = await redis.get(getOtpCooldownKey(emailNorm))
+  if (onCooldown) {
+    return {
+      ok: false,
+      message: "Please wait a minute before requesting another code.",
+    }
+  }
+
+  const otp = String(Math.floor(100000 + Math.random() * 900000))
+  await redis.set(getOtp(emailNorm), otp, "EX", 60 * 3)
+  if (userId) {
+    await redis.set(getOtpUserKey(emailNorm), userId, "EX", 60 * 3)
+  }
+
+  const sent = await sendCustomerOTPEmail({
+    to: emailNorm,
+    otp,
+    customerName: customerName || emailNorm.split("@")[0] || "there",
+  })
+
+  if (!sent) {
+    return {
+      ok: false,
+      message: "Could not send OTP email. Check SMTP configuration.",
+    }
+  }
+
+  await redis.set(getOtpCooldownKey(emailNorm), "1", "EX", 60)
+
+  return { ok: true }
+}
+
+async function findAuthUserByEmail(emailNorm) {
+  const { data, error } = await supabase.auth.admin.listUsers({
+    page: 1,
+    perPage: 1000,
+  })
+  if (error) {
+    console.error("findAuthUserByEmail:", error)
+    return null
+  }
+  return data.users.find((u) => u.email?.toLowerCase() === emailNorm) ?? null
+}
+
+async function lookupUserIdByEmail(emailNorm) {
+  const user = await findAuthUserByEmail(emailNorm)
+  return user?.id ?? null
+}
+
 const PAID_ORDER_STATUS = "confirmed"
 
 async function sendCustomerOrderPlacedEmail({
@@ -214,6 +290,65 @@ Your order is confirmed. Shipping usually arrives in 4–5 business days.
     return false
   }
 }
+
+
+async function sendCustomerOTPEmail({
+  to,
+  otp,
+  customerName,
+}) {
+  try {
+    if (!to) return false
+    const transporter = getMailTransporter()
+    if (!transporter) {
+      console.warn("Customer otp email skipped: SMTP config missing")
+      return false
+    } 
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER
+    const logoUrl = getBrandLogoUrl()
+    const greeting = customerName ? `Hi ${escapeHtml(customerName)},` : "Hi there,"
+
+    await transporter.sendMail({
+      from,
+      to,
+      subject: `${otp} - JACRO Verification`,
+      text: `Thank you for signing up with JACRO.
+
+Your OTP is ${otp}. Please use this OTP to verify your email.
+
+Thank you for signing up with JACRO.
+
+— JACRO`,
+      html: `
+        <div style="font-family: Georgia, 'Times New Roman', serif; background:#F5F5DC; padding:32px 16px;">
+          <motion.div style="max-width:520px; margin:0 auto; background:#ffffff; border:1px solid #E5E5E5; border-radius:4px; overflow:hidden;">
+            <div style="background:#111111; padding:28px 24px; text-align:center;">
+              <img src="${logoUrl}" alt="JACRO" width="56" height="56" style="display:block; margin:0 auto 12px; border-radius:8px;" />
+              <p style="margin:0; color:#F5F5DC; font-size:22px; letter-spacing:0.2em;">JACRO</p>
+            </div>
+            <div style="padding:28px 24px; color:#111111; line-height:1.6;">
+              <p style="margin:0 0 16px; font-size:16px;">${greeting}</p>
+              <p style="margin:0 0 20px; color:#6B6B6B;">Thank you for signing up with JACRO. 
+              <br>
+              <h1 style ="font-size:24px; font-weight:bold; color:#111111;">Your OTP is ${otp}. 
+              <br>
+              <p style="margin:0; color:#6B6B6B; font-size:14px;">Please use this OTP to verify your email.</p>
+              <p style="margin:0; color:#6B6B6B; font-size:14px;">Thank you for signing up with JACRO.</p>
+            </div>
+            <div style="padding:16px 24px; border-top:1px solid #E5E5E5; text-align:center; color:#6B6B6B; font-size:12px;">
+              © JACRO
+            </div>
+          </div>
+        </div>
+      `.replace(/<motion\.div/g, "<div"),
+    })
+    return true
+  } catch (e) {
+    console.error("send_customer_otp_email:", e)
+    return false
+  }
+}
+
 
 /**
  * Notify store owner when a new order is placed (checkout).
@@ -362,9 +497,53 @@ app.get("/health", (req, res)=>{
   res.json({message: "Healthy!"})
 })
 
+function parseJsonField(value, fallback) {
+  if (value == null || value === "") return fallback
+  if (typeof value === "object") return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+function parseProductSizes(value) {
+  const parsed = parseJsonField(value, null)
+  if (Array.isArray(parsed)) {
+    return parsed.map((s) => String(s).trim()).filter(Boolean)
+  }
+  if (typeof value === "string" && value.includes(",")) {
+    return value.split(",").map((s) => s.trim()).filter(Boolean)
+  }
+  return []
+}
+
+function parseProductColors(value) {
+  const parsed = parseJsonField(value, [])
+  if (!Array.isArray(parsed)) return []
+  return parsed
+    .map((c) => ({
+      name: String(c?.name ?? "").trim(),
+      value: String(c?.value ?? "#CCCCCC").trim(),
+    }))
+    .filter((c) => c.name)
+}
+
+function parseProductDimensions(value) {
+  const parsed = parseJsonField(value, null)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const dimensions = {}
+  for (const key of ["length", "width", "height", "unit", "fit_notes"]) {
+    if (parsed[key] != null && String(parsed[key]).trim() !== "") {
+      dimensions[key] = String(parsed[key]).trim()
+    }
+  }
+  return Object.keys(dimensions).length > 0 ? dimensions : null
+}
+
 app.post("/add_product", upload.array("files"), async (req, res) => {
   try {
-    const { name, desc, price, category } = req.body
+    const { name, desc, price, category, sizes, colors, dimensions } = req.body
     const files = req.files || []
     if (!name || desc == null || price == null || !category || files.length === 0) {
       return res.status(400).json({ statusCode: 400, message: "Missing fields" })
@@ -372,6 +551,9 @@ app.post("/add_product", upload.array("files"), async (req, res) => {
 
     const productId = uuidv4()
     const priceNum = parseFloat(String(price))
+    const availableSizes = parseProductSizes(sizes)
+    const availableColors = parseProductColors(colors)
+    const productDimensions = parseProductDimensions(dimensions)
 
     await supabase
       .from("products")
@@ -381,6 +563,9 @@ app.post("/add_product", upload.array("files"), async (req, res) => {
         description: desc,
         price: priceNum,
         category,
+        sizes: availableSizes,
+        colors: availableColors,
+        dimensions: productDimensions,
       })
       .throwOnError()
 
@@ -469,47 +654,64 @@ async function registerUser(req, res) {
       return res.status(400).json({ message: pwErr })
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email: emailNorm,
-      password,
-      options: {
-        data: {
+    const existing = await findAuthUserByEmail(emailNorm)
+    if (existing?.email_confirmed_at) {
+      return res.status(409).json({ message: "Email already exists" })
+    }
+
+    let user = existing
+
+    if (existing) {
+      const { data, error } = await supabase.auth.admin.updateUserById(existing.id, {
+        password,
+        user_metadata: {
           full_name: nameNorm,
           name: nameNorm,
         },
-      },
-    })
-
-    if (error || !data.user) {
-      const msg = error?.message || "Register failed"
-      const isAlreadyRegistered =
-        /already registered|already exists|user exists/i.test(msg)
-      return res
-        .status(isAlreadyRegistered ? 409 : 400)
-        .json({ message: msg })
-    }
-
-
-    if (!data.user.email_confirmed_at) {
-      return res.json({
-        statusCode: 200,
-        needsEmailConfirmation: true,
-        message:
-          "Check your mail for verification, then sign in. Your account is not active until you confirm.",
-        user: {
-          id: data.user.id,
-          email: data.user.email,
+      })
+      if (error) {
+        return res.status(400).json({ message: error.message || "Register failed" })
+      }
+      user = data.user
+    } else {
+      // Admin create avoids Supabase's built-in signup email (2/hour on default SMTP).
+      // Verification is handled by our custom OTP emails instead.
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: emailNorm,
+        password,
+        email_confirm: false,
+        user_metadata: {
+          full_name: nameNorm,
           name: nameNorm,
         },
       })
+
+      if (error || !data.user) {
+        const msg = error?.message || "Register failed"
+        const isAlreadyRegistered =
+          /already registered|already exists|user exists/i.test(msg)
+        return res
+          .status(isAlreadyRegistered ? 409 : 400)
+          .json({ message: isAlreadyRegistered ? "Email already exists" : msg })
+      }
+      user = data.user
+    }
+
+    const otpResult = await issueOtpForEmail(emailNorm, {
+      customerName: nameNorm,
+      userId: user.id,
+    })
+    if (!otpResult.ok) {
+      return res.status(500).json({ message: otpResult.message })
     }
 
     return res.json({
       statusCode: 200,
-      needsEmailConfirmation: false,
+      needsEmailConfirmation: true,
+      message: "OTP sent to your email. Verify to activate your account.",
       user: {
-        id: data.user.id,
-        email: data.user.email,
+        id: user.id,
+        email: user.email,
         name: nameNorm,
       },
     })
@@ -521,6 +723,84 @@ async function registerUser(req, res) {
 
 app.post("/register", signupLimiter, requireCaptcha, registerUser)
 app.post("/signup", signupLimiter, requireCaptcha, registerUser)
+
+
+async function sendOtpHandler(req, res) {
+  try {
+    const emailNorm =
+      typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : ""
+    if (!emailNorm) {
+      return res.status(400).json({ message: "email required" })
+    }
+
+    let userId = await redis.get(getOtpUserKey(emailNorm))
+    if (!userId) {
+      userId = await lookupUserIdByEmail(emailNorm)
+    }
+
+    const result = await issueOtpForEmail(emailNorm, {
+      customerName: req.body?.name,
+      userId: userId || undefined,
+    })
+    if (!result.ok) {
+      return res.status(500).json({ message: result.message })
+    }
+
+    return res.json({ statusCode: 200, message: "OTP sent successfully" })
+  } catch (e) {
+    console.error("send-otp:", e)
+    return res.status(500).json({ message: String(e) })
+  }
+}
+
+app.post("/send-otp", sendOtpHandler)
+app.post("/resend-otp", sendOtpHandler)
+
+app.post("/verify-otp", async (req, res) => {
+  try {
+    const emailNorm =
+      typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : ""
+    const otp = String(req.body?.otp ?? "").trim()
+
+    if (!emailNorm || !otp) {
+      return res.status(400).json({ message: "email and otp required" })
+    }
+
+    const savedOtp = await redis.get(getOtp(emailNorm))
+    if (!savedOtp) {
+      return res.status(400).json({ message: "Invalid or expired OTP" })
+    }
+    if (savedOtp !== otp) {
+      return res.status(400).json({ message: "Invalid OTP" })
+    }
+
+    let userId = await redis.get(getOtpUserKey(emailNorm))
+    if (!userId) {
+      userId = await lookupUserIdByEmail(emailNorm)
+    }
+
+    if (userId) {
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(
+        userId,
+        { email_confirm: true }
+      )
+      if (updateErr) {
+        console.error("verify-otp confirm:", updateErr)
+        return res.status(500).json({
+          message: "OTP verified but could not activate account",
+        })
+      }
+    }
+
+    await redis.del(getOtp(emailNorm))
+    await redis.del(getOtpUserKey(emailNorm))
+
+    return res.json({ statusCode: 200, message: "OTP verified successfully" })
+  } catch (e) {
+    console.error("verify-otp:", e)
+    return res.status(500).json({ message: String(e) })
+  }
+})
 
 app.post("/auth/change-password", authenticateJWT, async (req, res) => {
   try {
@@ -685,6 +965,9 @@ app.get("/products/:productId", async (req, res) => {
         description: p.description,
         category: p.category,
         images: (p.product_images || []).map((img) => img.image_url),
+        sizes: Array.isArray(p.sizes) ? p.sizes : [],
+        colors: Array.isArray(p.colors) ? p.colors : [],
+        dimensions: p.dimensions ?? null,
       },
     })
   } catch (e) {

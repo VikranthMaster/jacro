@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import Image from "next/image"
 import { ChevronLeft, Minus, Plus, ShoppingBag, Heart } from "lucide-react"
@@ -10,6 +10,7 @@ import { useCart } from "@/lib/cart"
 import { useWishlist } from "@/lib/wishlist"
 import { formatPrice } from "@/lib/currency"
 import { toast } from "@/hooks/use-toast"
+import type { ProductDimensions } from "@/lib/products"
 
 interface ProductDetailProps {
   product: {
@@ -18,8 +19,9 @@ interface ProductDetailProps {
     price: number
     description: string
     images: string[]
-    colors?: { name: string; value: string }[] // optional
-    sizes: string[]
+    colors?: { name: string; value: string }[]
+    sizes?: string[]
+    dimensions?: ProductDimensions | null
     category: string
   }
 }
@@ -29,8 +31,9 @@ export function ProductDetail({ product }: ProductDetailProps) {
   const [selectedImage, setSelectedImage] = useState(0)
   const images = product.images ?? []
   const colors = product.colors ?? []
-  const sizes = product.sizes ?? ['S']
-  const [selectedColor, setSelectedColor] = useState(colors[0]?.name || "")
+  const sizes = product.sizes ?? []
+  const dimensions = product.dimensions
+  const [selectedColor, setSelectedColor] = useState("")
   const [selectedSize, setSelectedSize] = useState("")
   const [quantity, setQuantity] = useState(1)
   const [isAdding, setIsAdding] = useState(false)
@@ -39,11 +42,27 @@ export function ProductDetail({ product }: ProductDetailProps) {
   const { isInWishlist, toggleItem } = useWishlist()
   const wishlisted = isInWishlist(product.id)
 
-  const handleAddToCart = async () => {
-    if (!selectedSize) {
+  useEffect(() => {
+    const productColors = product.colors ?? []
+    const productSizes = product.sizes ?? []
+    setSelectedColor(productColors.length === 1 ? productColors[0].name : "")
+    setSelectedSize(productSizes.length === 1 ? productSizes[0] : "")
+  }, [product.id, product.colors, product.sizes])
+
+  const validateSelection = () => {
+    if (sizes.length > 0 && !selectedSize) {
       alert("Please select a size")
-      return
+      return false
     }
+    if (colors.length > 0 && !selectedColor) {
+      alert("Please select a color")
+      return false
+    }
+    return true
+  }
+
+  const handleAddToCart = async () => {
+    if (!validateSelection()) return
 
     const userId = localStorage.getItem("user_id")
     if (!userId) {
@@ -76,10 +95,7 @@ export function ProductDetail({ product }: ProductDetailProps) {
   }
 
   const handleBuyNow = async () => {
-    if (!selectedSize) {
-      alert("Please select a size")
-      return
-    }
+    if (!validateSelection()) return
     const userId = localStorage.getItem("user_id")
     if (!userId) {
       alert("Please log in to continue")
@@ -230,10 +246,54 @@ export function ProductDetail({ product }: ProductDetailProps) {
             {/* Divider */}
             <div className="h-px bg-[#E5E5E5]" />
 
+            {/* Dimensions */}
+            {dimensions && (dimensions.length || dimensions.width || dimensions.height || dimensions.fit_notes) && (
+              <div>
+                <h4 className="text-[#111111] text-sm tracking-[0.1em] uppercase mb-4 font-medium">
+                  Details
+                </h4>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  {dimensions.length && (
+                    <>
+                      <dt className="text-[#6B6B6B]">Length</dt>
+                      <dd className="text-[#111111]">
+                        {dimensions.length}
+                        {dimensions.unit ? ` ${dimensions.unit}` : ""}
+                      </dd>
+                    </>
+                  )}
+                  {dimensions.width && (
+                    <>
+                      <dt className="text-[#6B6B6B]">Width</dt>
+                      <dd className="text-[#111111]">
+                        {dimensions.width}
+                        {dimensions.unit ? ` ${dimensions.unit}` : ""}
+                      </dd>
+                    </>
+                  )}
+                  {dimensions.height && (
+                    <>
+                      <dt className="text-[#6B6B6B]">Height</dt>
+                      <dd className="text-[#111111]">
+                        {dimensions.height}
+                        {dimensions.unit ? ` ${dimensions.unit}` : ""}
+                      </dd>
+                    </>
+                  )}
+                </dl>
+                {dimensions.fit_notes && (
+                  <p className="text-[#6B6B6B] text-sm mt-3 leading-relaxed">
+                    {dimensions.fit_notes}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Color selector */}
+            {colors.length > 0 && (
             <div>
               <h4 className="text-[#111111] text-sm tracking-[0.1em] uppercase mb-4 font-medium">
-                Color: <span className="text-[#6B6B6B] font-normal">{selectedColor}</span>
+                Color: <span className="text-[#6B6B6B] font-normal">{selectedColor || "Select"}</span>
               </h4>
               <div className="flex gap-3">
                 {colors.map((color) => (
@@ -254,8 +314,10 @@ export function ProductDetail({ product }: ProductDetailProps) {
                 ))}
               </div>
             </div>
+            )}
 
             {/* Size selector */}
+            {sizes.length > 0 && (
             <div>
               <h4 className="text-[#111111] text-sm tracking-[0.1em] uppercase mb-4 font-medium">
                 Size {!selectedSize && <span className="text-[#DC2626] font-normal">*</span>}
@@ -276,6 +338,7 @@ export function ProductDetail({ product }: ProductDetailProps) {
                 ))}
               </div>
             </div>
+            )}
 
             {/* Quantity */}
             <div>

@@ -19,6 +19,7 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const { login } = useAuth()
   const justRegistered = searchParams.get("registered") === "1"
+  const justVerified = searchParams.get("verified") === "1"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -65,11 +66,20 @@ function LoginForm() {
             Welcome Back
           </h1>
           <p className="text-center text-[#6B6B6B] text-sm mb-6">
-            Sign in to your JACRO account. If you just registered, check your mail for verification
-            first.
+            Sign in to your JACRO account.
           </p>
 
-          {justRegistered && (
+          {justVerified && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-sm px-4 py-3 rounded-md mb-6"
+            >
+              Email verified. You can sign in now.
+            </motion.div>
+          )}
+
+          {justRegistered && !justVerified && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}

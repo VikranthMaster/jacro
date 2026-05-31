@@ -28,7 +28,7 @@ interface AuthStore {
   changePassword: (oldPassword: string, newPassword: string) => Promise<boolean>
 }
 
-const BASE_URL = "/api";
+const BASE_URL = "http://localhost:8001";
 
 
 export const useAuth = create<AuthStore>()(
@@ -68,7 +68,7 @@ export const useAuth = create<AuthStore>()(
 
           const emailNotConfirmed = data.code === "EMAIL_NOT_CONFIRMED"
           const hint =
-            "Check your mail for verification — open the link we sent, then sign in here."
+            "Your email is not verified yet. Enter the OTP we sent, then sign in here."
           return {
             ok: false,
             message: emailNotConfirmed
@@ -99,9 +99,14 @@ export const useAuth = create<AuthStore>()(
             const msg = data.message || "Registration failed"
             const looksLikeDuplicate =
               /already registered|already exists|user exists/i.test(msg)
+            const looksLikeRateLimit = /rate limit/i.test(msg)
             return {
               ok: false,
-              message: looksLikeDuplicate ? "Email already exists" : msg,
+              message: looksLikeDuplicate
+                ? "Email already exists"
+                : looksLikeRateLimit
+                  ? "Too many attempts. Please wait a few minutes and try again."
+                  : msg,
             }
           }
 

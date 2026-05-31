@@ -3,11 +3,19 @@ import type { Product } from "@/components/product-card"
 // colors: ["Charcoal", "Camel", "Navy"],
 //   sizes: ["XS", "S", "M", "L", "XL"],
 
-const BASE_URL = "/api"
+const BASE_URL = "http://localhost:8001"
 
 // -----------------------------
 // 🧠 TYPES
 // -----------------------------
+
+export interface ProductDimensions {
+  length?: string
+  width?: string
+  height?: string
+  unit?: string
+  fit_notes?: string
+}
 
 export interface ProductDetails {
   id: string
@@ -17,6 +25,7 @@ export interface ProductDetails {
   images: string[]
   colors: { name: string; value: string }[]
   sizes: string[]
+  dimensions?: ProductDimensions | null
   category: string
 }
 
@@ -73,13 +82,9 @@ export async function getProductById(id: string): Promise<ProductDetails | null>
       description: p.description,
       images: p.images || [],
       category: p.category,
-
-      colors: [
-        { name: "Charcoal", value: "#36454F" },
-        { name: "Camel", value: "#C19A6B" },
-        { name: "Navy", value: "#001F5B" },
-      ],
-      sizes: ["XS", "S", "M", "L", "XL"],
+      colors: Array.isArray(p.colors) ? p.colors : [],
+      sizes: Array.isArray(p.sizes) ? p.sizes : [],
+      dimensions: p.dimensions ?? null,
     }
   } catch (err) {
     console.error("Error fetching product:", err)

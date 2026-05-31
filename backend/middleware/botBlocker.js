@@ -1,4 +1,4 @@
-const BLOCKED_SUBSTRINGS = ["curl", "postman", "bot", "spider", "wget"]
+const BLOCKED_SUBSTRINGS = ["postman", "bot", "spider", "wget"]
 
 /**
  * Blocks common scripted clients by User-Agent substring (case-insensitive).
