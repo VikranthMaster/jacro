@@ -795,7 +795,32 @@ app.post("/verify-otp", async (req, res) => {
     await redis.del(getOtp(emailNorm))
     await redis.del(getOtpUserKey(emailNorm))
 
-    return res.json({ statusCode: 200, message: "OTP verified successfully" })
+    if (!userId) {
+      return res.json({ statusCode: 200, message: "OTP verified successfully" })
+    }
+
+    const { data: userData, error: userErr } = await supabase.auth.admin.getUserById(
+      userId
+    )
+    if (userErr || !userData?.user) {
+      console.error("verify-otp getUser:", userErr)
+      return res.json({ statusCode: 200, message: "OTP verified successfully" })
+    }
+
+    const user = userData.user
+    const appJwt = signAppJwt(user.id)
+    const meta = user.user_metadata || {}
+    const fallbackName = emailNorm.split("@")[0] || "User"
+    return res.json({
+      statusCode: 200,
+      message: "OTP verified successfully",
+      user: {
+        id: user.id,
+        email: user.email,
+        name: meta.full_name || meta.name || fallbackName,
+      },
+      token: appJwt,
+    })
   } catch (e) {
     console.error("verify-otp:", e)
     return res.status(500).json({ message: String(e) })
